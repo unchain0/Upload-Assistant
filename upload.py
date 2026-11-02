@@ -91,7 +91,7 @@ from src.add_comparison import ComparisonManager
 from src.app_paths import CODE_DIR, STATE_DIR
 from src.args import Args, cli_argument_catalog, cli_option_choices, read_paths_from_stdin
 from src.artwork import is_public_http_url, is_valid_cover_image
-from src.audio_spectrogram import process_audio_spectrograms
+from src.audio_spectrogram import process_audio_spectrograms, spectrogram_requested
 from src.binaries import configured_binary
 from src.book_prep import detect_newspaper, is_valid_book_language, resolve_book_language
 from src.cleanup import cleanup_manager
@@ -1764,7 +1764,7 @@ async def process_meta(meta: Meta, base_dir: str) -> bool:
                 elif meta.path_to_menu_screenshots or config["DEFAULT"].get("auto_dvd_menus", False):
                     await process_disc_menus(meta, config)
 
-            if meta.audio_spectrogram or meta.audio_spectrogram_tracks or config["DEFAULT"].get("add_audio_spectrogram", False):
+            if spectrogram_requested(meta, config):
                 try:
                     await process_audio_spectrograms(meta, config, uploadscreens_manager)
                 except Exception as e:

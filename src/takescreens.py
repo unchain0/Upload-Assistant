@@ -1862,7 +1862,7 @@ async def generate_ebook_screenshots(
                 meta.artwork_path = str(cover_path)
                 meta.artwork_banner_path = str(banner_path)
 
-    elif extension in ["pdf", "mobi", "epub"]:
+    elif extension in ["pdf", "mobi", "epub", "azw", "azw3"]:
         try:
             if extension == "epub" and need_cover:
                 try:

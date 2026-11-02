@@ -101,6 +101,17 @@ def _positive_config_int(config: dict[str, Any], key: str, default: int) -> int:
     return value_as_int
 
 
+def spectrogram_requested(meta: Any, config: dict[str, Any] | None = None) -> bool:
+    """Audiobooks always need at least one image, so the spectrogram is forced."""
+    defaults = (config or {}).get("DEFAULT", {})
+    return bool(
+        meta.audiobook
+        or getattr(meta, "audio_spectrogram", False)
+        or getattr(meta, "audio_spectrogram_tracks", None)
+        or defaults.get("add_audio_spectrogram", False)
+    )
+
+
 def get_spectrogram_sources(category: str, filelist: list[Any], disc_final_path: Path | None, max_source_files: int) -> list[Path]:
     """Return source files for a release, preserving all music/audiobook chapters."""
     if disc_final_path:

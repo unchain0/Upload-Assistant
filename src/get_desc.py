@@ -924,7 +924,7 @@ class DescriptionBuilder:
         """Returns the audio spectrogram section if applicable."""
         try:
             add_audio_spectrogram = self._get_bool_config("add_audio_spectrogram", False, meta)
-            add_spec = meta.audio_spectrogram or meta.audio_spectrogram_tracks or add_audio_spectrogram
+            add_spec = meta.audiobook or meta.audio_spectrogram or meta.audio_spectrogram_tracks or add_audio_spectrogram
             if not add_spec:
                 return ""
 
