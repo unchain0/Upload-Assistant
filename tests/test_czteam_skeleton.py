@@ -29,7 +29,7 @@ def test_czteam_is_registered_in_the_registry_and_catalog() -> None:
     assert tracker_class_map["CZTEAM"] is CZTeam
     definition = TRACKER_DEFINITIONS["CZTEAM"]
     assert definition.auth_type == "cookies"
-    assert definition.supported_categories == ("MOVIE", "TV")
+    assert definition.supported_categories == ("MOVIE", "TV", "GAME", "MUSIC", "XXX")
     assert definition.comment_hosts == ("czteam.me",)
 
 
@@ -49,15 +49,15 @@ def test_czteam_reads_ids_from_configuration() -> None:
 
 def test_czteam_ignores_unknown_or_invalid_configured_ids() -> None:
     tracker = _tracker(categories={"MOVIE": "abc", "TV": 0})
-    assert tracker.get_category(_meta()) == 0
-    assert tracker.get_category(_meta(category="TV")) == 0
+    assert tracker.get_category(_meta()) == 29
+    assert tracker.get_category(_meta(category="TV")) == 5
     assert tracker.get_category(_meta(category="BOOK")) == 0
 
 
 def test_czteam_does_not_upload_an_unmapped_category() -> None:
     tracker = _tracker()
     tracker.cookie_auth_uploader.handle_upload = AsyncMock()  # type: ignore[method-assign]
-    meta = _meta(category="TV")
+    meta = _meta(category="BOOK")
     assert asyncio.run(tracker.upload(meta)) is False
     tracker.cookie_auth_uploader.handle_upload.assert_not_awaited()
     assert meta.skipping == "CZTEAM"
@@ -74,3 +74,26 @@ def test_czteam_uploads_a_mapped_category() -> None:
     )
     assert asyncio.run(tracker.upload(_meta())) is True
     tracker.cookie_auth_uploader.handle_upload.assert_awaited_once()
+
+
+def test_czteam_maps_the_real_site_categories() -> None:
+    tracker = _tracker()
+    assert tracker.get_category(_meta()) == 29
+    assert tracker.get_category(_meta(type="XviD")) == 19
+    assert tracker.get_category(_meta(is_disc="BDMV")) == 36
+    assert tracker.get_category(_meta(category="TV", resolution="1080p")) == 5
+    assert tracker.get_category(_meta(category="TV", resolution="480p")) == 7
+    assert tracker.get_category(_meta(category="GAME", is_disc="ISO")) == 4
+    assert tracker.get_category(
+        _meta(category="GAME", platform="PlayStation 5")
+    ) == 12
+    assert tracker.get_category(_meta(category="MUSIC", type="FLAC")) == 35
+    assert tracker.get_category(_meta(category="BOOK")) == 0
+
+
+def test_czteam_validates_the_literal_enums() -> None:
+    assert CZTeam._enum_value("1080p", CZTeam._RESOLUTIONS) == "1080p"
+    assert CZTeam._enum_value("1440p", CZTeam._RESOLUTIONS) == ""
+    assert CZTeam._enum_value("h.265", CZTeam._CODECS) == "H.265"
+    assert CZTeam._enum_value("mkv", CZTeam._CONTAINERS) == "MKV"
+    assert CZTeam._enum_value("web-dl", CZTeam._SOURCES) == "WEB-DL"
