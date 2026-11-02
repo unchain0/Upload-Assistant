@@ -1911,13 +1911,28 @@ def _repair_final_book_title(
 
 
 async def _apply_audnexus_narrator(meta: Meta) -> None:
-    if not meta.audiobook or meta.narrator or not meta.asin:
+    if not meta.audiobook or meta.narrator:
         return
+    from src.integrations.external_apis.audible import AudibleManager
     from src.integrations.external_apis.audnexus import AudnexusManager
 
+    if not meta.asin:
+        asin = await AudibleManager().asin_by_title_author(
+            str(meta.title or ""), str(meta.author or "")
+        )
+        if not asin:
+            logger.info(
+                "ASIN not found on Audible; keeping the narrator requirement"
+            )
+            return
+        meta.asin = asin
     narrator = await AudnexusManager().narrator_by_asin(str(meta.asin))
     if narrator:
         meta.narrator = narrator
+    else:
+        logger.info(
+            f"ASIN {meta.asin} found but Audnexus returned no narrator"
+        )
 
 
 async def gather_book_prep(
