@@ -186,3 +186,38 @@ def test_zenith_blocks_a_language_conflict() -> None:
         filelist=["The Power of Now [ENG].epub"],
     )
     assert tracker._book_hygiene_policy(meta, list(meta.filelist)) is True
+
+
+def test_trailing_article_moves_to_the_front() -> None:
+    meta = Meta(
+        category="BOOK",
+        type="EPUB",
+        title="Origins of the Federal Reserve, The",
+        author="Murray N. Rothbard",
+        year=2009,
+        book_language_iso="eng",
+        isbn="9781933550473",
+        filelist=["book.epub"],
+    )
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+    assert name.startswith("Murray N. Rothbard - The Origins of the Federal Reserve")
+
+
+def test_retail_only_appears_when_the_filename_has_it() -> None:
+    tracker = _tracker()
+    base = {
+        "category": "BOOK",
+        "type": "EPUB",
+        "title": "Title",
+        "author": "Author",
+        "year": 2009,
+        "book_language_iso": "eng",
+        "isbn": "9781933550473",
+    }
+    without = Meta(**base, filelist=["Author - Title (2009) [ENG 9781933550473].epub"])
+    with_retail = Meta(
+        **base,
+        filelist=["Author - Title (2009) [ENG 9781933550473 Retail].epub"],
+    )
+    assert "Retail" not in asyncio.run(tracker.get_name(without))["name"]
+    assert "Retail" in asyncio.run(tracker.get_name(with_retail))["name"]

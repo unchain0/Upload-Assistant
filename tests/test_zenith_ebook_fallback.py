@@ -91,6 +91,22 @@ def test_ebook_meta_failure_uses_the_fallback(monkeypatch, tmp_path: Path) -> No
         zentag.prepare_zenith_ebook(meta, str(tmp_path), {})
     )
     assert target is not None
-    assert Path(target).name.endswith(
-        "(2000) [ENG 9781781100103].epub"
+    release_dir = Path(target)
+    assert release_dir.name == (
+        "J.K. Rowling - Harry Potter #4 - Harry Potter and the Goblet of Fire "
+        "(2000) [ENG 9781781100103]"
     )
+    assert (release_dir / f"{release_dir.name}.epub").is_file()
+
+
+def test_fallback_directories_are_unique(tmp_path: Path) -> None:
+    from src.integrations.media.zentag import _fallback_ebook_copy
+
+    source = tmp_path / "original.epub"
+    source.write_bytes(b"book")
+    meta = _meta(base_dir=str(tmp_path), uuid="abc")
+    first = _fallback_ebook_copy(meta, source, str(tmp_path))
+    second = _fallback_ebook_copy(meta, source, str(tmp_path))
+    assert first is not None and second is not None
+    assert first != second
+    assert "(1)" not in Path(first).name and "(1)" not in Path(second).name

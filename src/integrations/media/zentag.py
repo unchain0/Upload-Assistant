@@ -3,6 +3,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
@@ -583,7 +584,9 @@ def _fallback_ebook_copy(meta: Meta, source: Path, base_dir: str) -> str | None:
     if not filename:
         return None
     try:
-        target_dir = Path(base_dir) / "tmp" / str(meta.uuid) / "zenith-ebook-fallback"
+        container = Path(base_dir) / "tmp" / str(meta.uuid)
+        container.mkdir(parents=True, exist_ok=True)
+        target_dir = Path(tempfile.mkdtemp(prefix="zenith-ebook-", dir=container))
         target = target_dir / Path(filename).stem
         target.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target / filename)
