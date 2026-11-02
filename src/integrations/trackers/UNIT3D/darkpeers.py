@@ -492,6 +492,12 @@ class DarkPeers(UNIT3D):
             await languages_manager.process_desc_language(
                 meta, tracker=self.tracker
             )
+        if not meta.audio_languages and not meta.subtitle_languages:
+            logger.debug(
+                f"{self.tracker}: no audio or subtitle tracks to check; "
+                "skipping the language rule"
+            )
+            return True
         valid = self._video_language_policy_valid(
             self._languages(meta.audio_languages),
             self._languages(meta.subtitle_languages),

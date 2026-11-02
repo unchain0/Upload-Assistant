@@ -1641,3 +1641,38 @@ def test_darkpeers_game_requires_scene_rars_nfo_and_instructions():
 
     assert _additional_checks(valid_game) is True
     assert _additional_checks(iso) is False
+
+
+def test_darkpeers_language_policy_accepts_english_audio() -> None:
+    assert DarkPeers._video_language_policy_valid(
+        {"english"}, set(), "da"
+    ) is True
+
+
+def test_darkpeers_language_policy_accepts_original_audio_with_accepted_subs() -> None:
+    assert DarkPeers._video_language_policy_valid(
+        {"danish"}, {"english"}, "da"
+    ) is True
+
+
+def test_darkpeers_language_policy_rejects_when_no_track_qualifies() -> None:
+    assert DarkPeers._video_language_policy_valid(
+        {"portuguese"}, {"portuguese"}, "pt"
+    ) is False
+
+
+def test_darkpeers_language_rule_fails_open_without_track_data() -> None:
+    meta = Meta(
+        category="MOVIE",
+        unattended=True,
+        language_checked=True,
+        audio_languages=[],
+        subtitle_languages=[],
+        filelist=["Movie.mkv"],
+        resolution="1080p",
+        screens=3,
+    )
+    tracker = DarkPeers(
+        {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
+    )
+    assert asyncio.run(tracker.validate_video_languages(meta)) is True
