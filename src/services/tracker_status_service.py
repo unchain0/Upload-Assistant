@@ -284,6 +284,8 @@ class TrackerStatusManager:
         await self._prepare_tracker_meta(
             tracker_name, local_meta, tracker_class, status
         )
+        if tracker_name == "ZENITH" and not status["skipped"]:
+            local_meta = await self._prepare_zenith_before_status(local_meta)
         if not status["skipped"] and not status["banned"]:
             await self._evaluate_tracker(
                 tracker_name,
@@ -423,6 +425,22 @@ class TrackerStatusManager:
             return ""
         kind = "SOFTWARE" if meta.software else "GAME"
         return f"Required {kind} fields missing: {', '.join(fields)}"
+
+    async def _prepare_zenith_before_status(self, meta: Meta) -> Meta:
+        """Run the zentag preparation before the eligibility checks.
+
+        The status phase evaluates the book name before the upload phase
+        would prepare it, so an unprepared ebook is skipped for its
+        original filename. Prepare it here and evaluate the prepared meta.
+        """
+        from src.services.tracker_upload_service import prepare_tracker_meta
+
+        if not (
+            should_prepare_zenith_audiobook(meta, self.config)
+            or should_prepare_zenith_ebook(meta, self.config)
+        ):
+            return meta
+        return await prepare_tracker_meta(meta, "ZENITH", self.config)
 
     async def _evaluate_tracker(
         self,
