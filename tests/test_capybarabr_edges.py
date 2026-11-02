@@ -118,6 +118,7 @@ async def test_capybarabr_allows_a_named_mkv_without_sidecar_subs(
     meta = Meta(
         category="MOVIE",
         unattended=True,
+        screens=3,
         filelist=[_NUREMBERG_NAMED],
         tag="-CYBER.DUAL-Tontom",
     )
@@ -368,3 +369,59 @@ async def test_capybarabr_detects_dual_and_multi_separators(name: str) -> None:
         return_value=[{"name": name}]
     )
     assert await tracker._dual_release_allowed(_video_meta()) is False
+
+
+def _video_meta(**values: object) -> Meta:
+    defaults: dict[str, object] = {
+        "category": "MOVIE",
+        "type": "WEBDL",
+        "resolution": "1080p",
+        "screens": 3,
+        "name": "Movie.2024.1080p.WEB-DL.DDP5.1.H.264-GROUP",
+        "filelist": ["Movie.2024.1080p.WEB-DL.DDP5.1.H.264-GROUP.mkv"],
+    }
+    defaults.update(values)
+    return Meta(**defaults)
+
+
+def test_capybarabr_blocks_compressed_media() -> None:
+    for name in ("release.rar", "release.zip", "release.7z", "release.r00", "release.001"):
+        meta = _video_meta(filelist=["Movie.2024.mkv", name])
+        assert CapybaraBR._compressed_media(meta) is True
+    book = _video_meta(category="BOOK", filelist=["book.epub", "book.cbz"])
+    assert CapybaraBR._compressed_media(book) is False
+
+
+def test_capybarabr_sidecar_matches_video_stem_and_language_suffix() -> None:
+    meta = _video_meta(
+        filelist=["Show.S01E01.1080p.mkv"],
+        subtitle_files=["Show.S01E01.1080p.pt-BR.srt"],
+    )
+    assert CapybaraBR._orphan_sidecar_name(meta) == ""
+    meta = _video_meta(
+        filelist=["Show.S01E01.1080p.mkv"],
+        subtitle_files=["Show.S01E01.1080p.eng.ass"],
+    )
+    assert CapybaraBR._orphan_sidecar_name(meta) == ""
+
+
+def test_capybarabr_orphan_sidecar_is_reported() -> None:
+    meta = _video_meta(
+        filelist=["Show.S01E01.1080p.mkv"],
+        subtitle_files=["Show.S01E02.1080p.srt"],
+    )
+    assert CapybaraBR._orphan_sidecar_name(meta) == "Show.S01E02.1080p.srt"
+    assert "no matching video" in CapybaraBR._filename_skip_reason(meta)
+
+
+def test_capybarabr_sidecar_without_videos_fails_open() -> None:
+    meta = _video_meta(filelist=["Show.S01E01.srt"], subtitle_files=[])
+    assert CapybaraBR._orphan_sidecar_name(meta) == ""
+
+
+def test_capybarabr_screenshot_minimum_for_movies_and_shows() -> None:
+    tracker = _tracker()
+    assert tracker._screenshot_allowed(_video_meta(screens=3)) is True
+    assert tracker._screenshot_allowed(_video_meta(screens=2)) is False
+    assert tracker._screenshot_allowed(_video_meta(category="BOOK", screens=0)) is True
+    assert tracker._screenshot_allowed(_video_meta(screens=None)) is True

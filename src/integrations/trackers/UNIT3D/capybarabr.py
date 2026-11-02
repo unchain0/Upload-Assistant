@@ -18,6 +18,12 @@ _GROUP_ALREADY_MARKED_RE = re.compile(
 )
 _VIDEO_SUFFIXES = (".mkv", ".mp4", ".avi", ".m2ts", ".ts")
 _SIDECAR_SUFFIXES = (".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".sup")
+_COMPRESSED_RE = re.compile(r"(?i)\.(?:rar|zip|7z|r\d{2,3}|\d{3})$")
+_SIDECAR_LANGUAGE_RE = re.compile(
+    r"(?i)(?:[._-](?:pt[-_. ]?br|pb|pt|por|eng|en|es|spa|lat|fre|fra|ger|deu|"
+    r"jpn|jap|ita|rus|chi|zho|kor|dublado|legendado))+$"
+)
+_SCREENSHOTS_MINIMUM = 3
 
 
 class CapybaraBR(UNIT3D):
@@ -582,6 +588,8 @@ class CapybaraBR(UNIT3D):
         )
 
     async def _video_additional_checks(self, meta: Meta) -> bool:
+        if not self._screenshot_allowed(meta):
+            return False
         if not await self._dual_release_allowed(meta):
             return False
         reason = self._video_release_skip_reason(meta)
@@ -626,6 +634,30 @@ class CapybaraBR(UNIT3D):
             return False
         return True
 
+    def _screenshot_allowed(self, meta: Meta) -> bool:
+        """Enforce the tracker minimum of 3 screenshots for movies and shows.
+
+        The count is unknown when ``meta.screens`` is unset, so the check
+        fails open instead of blocking on missing data.
+        """
+        if meta.category not in {"MOVIE", "TV"} or meta.screens is None:
+            return True
+        count = CapybaraBR._screen_count(meta.screens)
+        if count >= _SCREENSHOTS_MINIMUM:
+            return True
+        logger.info(
+            f"{self.tracker}: [bold red]at least {_SCREENSHOTS_MINIMUM} screenshots are required "
+            f"for movies and shows (found {count}). Skipping upload...[/bold red]"
+        )
+        return False
+
+    @staticmethod
+    def _screen_count(value: Any) -> int:
+        try:
+            return int(value)
+        except TypeError, ValueError, OverflowError:
+            return 0
+
     def _video_release_skip_reason(self, meta: Meta) -> str:
         release_type = str(meta.type or "").casefold()
         if release_type == "encode" and not meta.has_encode_settings:
@@ -639,6 +671,11 @@ class CapybaraBR(UNIT3D):
 
     @staticmethod
     def _filename_skip_reason(meta: Meta) -> str:
+        if CapybaraBR._compressed_media(meta):
+            return "compressed media archives are not allowed for movies or shows; extract the release first"
+        orphan = CapybaraBR._orphan_sidecar_name(meta)
+        if orphan:
+            return f"sidecar subtitle '{orphan}' has no matching video file in the payload"
         if CapybaraBR._video_missing_audio_name(meta):
             return "the video filename is missing the audio codec and channels"
         if CapybaraBR._sidecar_duplicates_embedded_subs(meta):
@@ -692,6 +729,35 @@ class CapybaraBR(UNIT3D):
         base = name.replace("\\", "/").rsplit("/", 1)[-1]
         stem = base.rsplit(".", 1)[0]
         return _AUDIO_IN_FILENAME_RE.search(stem) is not None
+
+    @staticmethod
+    def _compressed_media(meta: Meta) -> bool:
+        return any(
+            _COMPRESSED_RE.search(name.replace("\\", "/").rsplit("/", 1)[-1])
+            for name in CapybaraBR._content_names(meta.filelist)
+        )
+
+    @staticmethod
+    def _orphan_sidecar_name(meta: Meta) -> str:
+        videos = {
+            CapybaraBR._stem(name)
+            for name in CapybaraBR._video_filenames(meta)
+        }
+        if not videos:
+            return ""
+        for name in CapybaraBR._sidecar_names(meta):
+            stem = CapybaraBR._stem(name)
+            if stem in videos:
+                continue
+            if _SIDECAR_LANGUAGE_RE.sub("", stem) in videos:
+                continue
+            return name
+        return ""
+
+    @staticmethod
+    def _stem(name: str) -> str:
+        base = name.replace("\\", "/").rsplit("/", 1)[-1]
+        return base.rsplit(".", 1)[0].casefold()
 
     @staticmethod
     def _has_embedded_text(meta: Meta) -> bool:
