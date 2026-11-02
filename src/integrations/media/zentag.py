@@ -547,16 +547,16 @@ def _fallback_ebook_copy(meta: Meta, source: Path, base_dir: str) -> str | None:
         return None
     try:
         target_dir = Path(base_dir) / "tmp" / str(meta.uuid) / "zenith-ebook-fallback"
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / filename
-        shutil.copy2(source, target)
+        target = target_dir / Path(filename).stem
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target / filename)
     except OSError as error:
         logger.warning(
             f"[yellow]ZENITH: could not copy the ebook with the fallback name: {error}[/yellow]"
         )
         return None
     logger.info(
-        f"[green]ZENITH: copied the ebook with the wiki filename: {target}[/green]"
+        f"[green]ZENITH: copied the ebook with the wiki filename: {target / filename}[/green]"
     )
     return str(target)
 
