@@ -2455,6 +2455,78 @@ def load_heavy_globals() -> None:
     install_gui_prompt_events()
 
 
+async def _qbittorrent_tracker_urls(torrent_hash: str) -> list[str]:
+    """Return the announce URLs qBittorrent has for one torrent."""
+    clients = config.get("TORRENT_CLIENTS", {})
+    client = clients.get("qbittorrent", {}) if isinstance(clients, dict) else {}
+    if not isinstance(client, dict):
+        raise RuntimeError("qBittorrent client is not configured")
+    host = str(client.get("qbit_url", "")).strip()
+    if not host:
+        raise RuntimeError("qbit_url is not configured")
+    verify = client.get("VERIFY_WEBUI_CERTIFICATE", True)
+    if isinstance(verify, str):
+        verify = verify.strip().lower() in {"1", "true", "yes"}
+
+    def fetch() -> list[str]:
+        import qbittorrentapi
+
+        kwargs: dict[str, Any] = {
+            "host": host,
+            "port": client.get("qbit_port"),
+            "VERIFY_WEBUI_CERTIFICATE": bool(verify),
+            "FORCE_SCHEME_FROM_HOST": True,
+        }
+        api_key = str(client.get("qbit_api_key") or "").strip()
+        if api_key:
+            qbt = qbittorrentapi.Client(api_key=api_key, **kwargs)
+        else:
+            qbt = qbittorrentapi.Client(
+                username=str(client.get("qbit_user", "")),
+                password=str(client.get("qbit_pass", "")),
+                **kwargs,
+            )
+            qbt.auth_log_in()
+        trackers = qbt.torrents_trackers(torrent_hash=torrent_hash)
+        urls: list[str] = []
+        for tracker in trackers:
+            if not isinstance(tracker, dict):
+                continue
+            url = str(tracker.get("url", "")).strip()
+            # qBittorrent reports DHT, PeX and LSD as pseudo-tracker entries.
+            if url.startswith(("http://", "https://", "udp://")):
+                urls.append(url)
+        return urls
+
+    return await asyncio.to_thread(fetch)
+
+
+def _argv_torrent_hash(argv: list[str]) -> str | None:
+    for index, arg in enumerate(argv):
+        if arg in {"--torrenthash", "-th"} and index + 1 < len(argv):
+            value = argv[index + 1].strip()
+            return value or None
+    return None
+
+
+async def _enforce_origin_gate() -> None:
+    """Skip unattended uploads whose origin is not a configured private tracker."""
+    from src.torrent_clients.origin_gate import check_origin
+
+    argv = sys.argv[1:]
+    if "--unattended" not in argv and "-ua" not in argv:
+        return
+    result = await check_origin(
+        unattended=True,
+        tracker_hash=_argv_torrent_hash(argv),
+        config=config,
+        fetch_tracker_urls=_qbittorrent_tracker_urls,
+    )
+    if not result.allowed:
+        logger.info(f"[bold yellow]{result.reason}[/bold yellow]")
+        raise SystemExit(0)
+
+
 async def do_the_thing(base_dir: str) -> None:
     webui_roots = subprocess_roots()
     if webui_roots is not None:
@@ -2485,6 +2557,8 @@ async def do_the_thing(base_dir: str) -> None:
         logger.warning(f"[yellow]Warning: could not reload config from disk: {exc}[/yellow]")
 
     configure_stats(config)
+
+    await _enforce_origin_gate()
 
     from src.prowlarr import ProwlarrError, apply_prowlarr_credentials, configured_prowlarr, fetch_prowlarr_credentials
 
