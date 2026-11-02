@@ -237,3 +237,46 @@ def test_public_and_unknown_origins_are_still_skipped_with_the_registry() -> (
             unattended=True, tracker_urls=[url], allowed_hosts=allowed
         )
         assert result.allowed is False, url
+
+
+def test_mam_origin_is_allowed_when_the_api_key_is_configured() -> None:
+    config = {"DEFAULT": {"mam_api_key": "key"}}
+    result = evaluate_origin(
+        unattended=True,
+        tracker_urls=["https://t.myanonamouse.net/announce"],
+        allowed_hosts=configured_origin_hosts(config),
+    )
+    assert result.allowed is True
+
+
+def test_mam_origin_is_blocked_without_the_api_key() -> None:
+    result = evaluate_origin(
+        unattended=True,
+        tracker_urls=["https://t.myanonamouse.net/announce"],
+        allowed_hosts=configured_origin_hosts({"DEFAULT": {}}),
+    )
+    assert result.allowed is False
+
+
+def test_public_and_unknown_origins_are_blocked() -> None:
+    config = {"DEFAULT": {"mam_api_key": "key"}}
+    for url in (
+        "https://tracker.opentrackr.org/announce",
+        "https://unknown.example/announce",
+    ):
+        result = evaluate_origin(
+            unattended=True,
+            tracker_urls=[url],
+            allowed_hosts=configured_origin_hosts(config),
+        )
+        assert result.allowed is False
+
+
+def test_explicit_origin_allowed_hosts_extends_the_allowlist() -> None:
+    config = {"DEFAULT": {"origin_allowed_hosts": ["https://mirror.example/announce"]}}
+    result = evaluate_origin(
+        unattended=True,
+        tracker_urls=["https://mirror.example/announce"],
+        allowed_hosts=configured_origin_hosts(config),
+    )
+    assert result.allowed is True
