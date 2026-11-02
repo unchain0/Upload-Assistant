@@ -61,15 +61,18 @@ def test_book_prep_applies_the_narrator(monkeypatch) -> None:  # type: ignore[no
     from src.services import book_preparation
 
     async def fake(self, asin: str, client=None):  # type: ignore[no-untyped-def]
-        return "Jane Doe"
+        return {"narrator": "Jane Doe", "language": "english", "publisher": "Penguin", "year": "2018"}
 
     monkeypatch.setattr(
-        "src.integrations.external_apis.audnexus.AudnexusManager.narrator_by_asin",
+        "src.integrations.external_apis.audnexus.AudnexusManager.metadata_by_asin",
         fake,
     )
     meta = Meta(audiobook=True, asin="B000000000")
     asyncio.run(book_preparation._apply_audnexus_narrator(meta))
     assert meta.narrator == "Jane Doe"
+    assert meta.book_language_iso == "eng"
+    assert meta.publisher == "Penguin"
+    assert meta.year == 2018
 
 
 def test_skip_reasons_are_logged(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -96,3 +99,47 @@ def test_skip_reasons_are_logged(monkeypatch) -> None:  # type: ignore[no-untype
         book_preparation._apply_audnexus_narrator(Meta(audiobook=True, title=""))
     )
     assert any("missing title or author" in message for message in messages)
+
+
+class _MetaClient:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    async def get(self, url: str, params: dict | None = None):
+        class _R:
+            status_code = 200
+            def json(self_inner):  # type: ignore[no-untyped-def]
+                return self.payload
+        return _R()
+
+
+def test_metadata_maps_language_publisher_and_year() -> None:
+    manager = AudnexusManager()
+    english = asyncio.run(
+        manager.metadata_by_asin(
+            "B07DX9W2CG",
+            client=_MetaClient(
+                {
+                    "narrators": [{"name": "Brené Brown"}],
+                    "language": "english",
+                    "publisherName": "Penguin Audio",
+                    "releaseDate": "2018-06-26T00:00:00.000Z",
+                }
+            ),  # type: ignore[arg-type]
+        )
+    )
+    assert english == {
+        "narrator": "Brené Brown",
+        "language": "english",
+        "publisher": "Penguin Audio",
+        "year": "2018",
+    }
+    spanish = asyncio.run(
+        manager.metadata_by_asin(
+            "B000000000",
+            client=_MetaClient(
+                {"language": "spanish", "publisherName": "Planeta"}
+            ),  # type: ignore[arg-type]
+        )
+    )
+    assert spanish["language"] == "spanish"

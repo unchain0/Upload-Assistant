@@ -130,16 +130,16 @@ def test_book_prep_resolves_asin_and_narrator(monkeypatch) -> None:  # type: ign
     async def fake_asin(self, title: str, author: str, client=None):  # type: ignore[no-untyped-def]
         return "B000000001"
 
-    async def fake_narrator(self, asin: str, client=None):  # type: ignore[no-untyped-def]
-        return "Jane Doe"
+    async def fake_metadata(self, asin: str, client=None):  # type: ignore[no-untyped-def]
+        return {"narrator": "Jane Doe", "language": "english", "publisher": "Penguin", "year": "2018"}
 
     monkeypatch.setattr(
         "src.integrations.external_apis.audible.AudibleManager.asin_by_title_author",
         fake_asin,
     )
     monkeypatch.setattr(
-        "src.integrations.external_apis.audnexus.AudnexusManager.narrator_by_asin",
-        fake_narrator,
+        "src.integrations.external_apis.audnexus.AudnexusManager.metadata_by_asin",
+        fake_metadata,
     )
     meta = Meta(audiobook=True, title="Book", author="Author")
     asyncio.run(book_preparation._apply_audnexus_narrator(meta))
