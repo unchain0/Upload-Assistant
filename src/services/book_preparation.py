@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import os
 import re
+import unicodedata
 import zipfile
 from dataclasses import dataclass
 from difflib import SequenceMatcher
@@ -419,12 +420,37 @@ def _clean_book_identity_title(title: str) -> str:
     return cleaned
 
 
+def _folder_author(path: str) -> str:
+    source = Path(path)
+    parent = source.parent if source.is_file() else source
+    return parent.parent.name.strip()
+
+
+def _author_tokens(value: str) -> set[str]:
+    text = unicodedata.normalize("NFKD", value.casefold())
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    return {token for token in re.findall(r"[a-z]+", text) if len(token) > 2}
+
+
+def _same_author_name(candidate: str, folder_author: str) -> bool:
+    folder_tokens = _author_tokens(folder_author)
+    if not folder_tokens:
+        return False
+    return folder_tokens.issubset(_author_tokens(candidate))
+
+
 def book_identity_from_path(path: str) -> tuple[str, str]:
     name = _book_path_name(path)
     parts = re.split(r"\s+-\s+", name, maxsplit=1)
     if len(parts) != 2:
         return "", ""
     first, second = parts
+    folder_author = _folder_author(path)
+    if folder_author:
+        if _same_author_name(second, folder_author):
+            return second.strip(), _clean_book_identity_title(first)
+        if _same_author_name(first, folder_author):
+            return first.strip(), _clean_book_identity_title(second)
     if _BOOK_PART_ONLY.fullmatch(second.strip()):
         return _fallback_book_title(name)
     pair = _book_identity_pair(first, second)
