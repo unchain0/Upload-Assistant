@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+
+import pytest
 from unittest.mock import AsyncMock
 
 from src.domain_models.release import Meta
@@ -119,11 +121,14 @@ def test_czteam_accepts_a_scene_named_video_with_full_metadata() -> None:
     assert _tracker()._video_skip_reason(_video_meta(screens=0)) == ""
 
 
-def test_czteam_rejects_a_title_outside_the_scene_pattern() -> None:
+def test_czteam_only_warns_for_a_title_outside_the_scene_pattern(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     reason = _tracker()._video_skip_reason(
         _video_meta(name="Resident Evil 2026 2160p WEB-DL")
     )
-    assert "scene naming" in reason
+    assert reason == ""
+    assert "does not look like the scene naming" in caplog.text
 
 
 def test_czteam_rejects_nuked_releases() -> None:
