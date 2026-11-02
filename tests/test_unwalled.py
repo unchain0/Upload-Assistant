@@ -1514,3 +1514,20 @@ def test_unwalled_requires_the_language_for_a_non_english_title() -> None:
     assert tracker._podcast_payload_reason(
         Meta(category="PODCAST", podcast_title=title, original_language="English", filelist=["a.mp3"])
     ) == ""
+
+
+def test_unwalled_rejects_unpadded_episode_numbers() -> None:
+    files = [f"{number} - Episode.mp3" for number in range(1, 13)]
+    meta = Meta(category="PODCAST", filelist=files)
+    assert "pad the numbers" in _tracker()._numbering_skip_reason(meta)
+
+
+def test_unwalled_accepts_zero_padded_episode_numbers() -> None:
+    files = [f"{number:02d} - Episode.mp3" for number in range(1, 13)]
+    meta = Meta(category="PODCAST", filelist=files)
+    assert _tracker()._numbering_skip_reason(meta) == ""
+
+
+def test_unwalled_numbering_fails_open_without_numbers() -> None:
+    meta = Meta(category="PODCAST", filelist=["intro.mp3", "outro.mp3"])
+    assert _tracker()._numbering_skip_reason(meta) == ""
