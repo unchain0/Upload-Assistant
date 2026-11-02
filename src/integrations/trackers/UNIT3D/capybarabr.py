@@ -582,6 +582,8 @@ class CapybaraBR(UNIT3D):
         )
 
     async def _video_additional_checks(self, meta: Meta) -> bool:
+        if not await self._dual_release_allowed(meta):
+            return False
         reason = self._video_release_skip_reason(meta)
         if reason:
             logger.info(
@@ -591,6 +593,38 @@ class CapybaraBR(UNIT3D):
         return await self.common.check_portuguese_video_requirements(
             meta, self.tracker
         )
+
+    async def _dual_release_allowed(self, meta: Meta) -> bool:
+        """Reject a mono release when the tracker already holds a DUAL one.
+
+        CapybaraBR staff require new releases of a title to carry DUAL audio
+        once any DUAL release exists, regardless of quality. The check is
+        best effort: a missing API key or a failing search never blocks.
+        """
+        if meta.dual_audio:
+            return True
+        if not str(getattr(self, "api_key", "") or "").strip():
+            logger.debug(
+                f"{self.tracker}: api_key is not configured; skipping the DUAL release check"
+            )
+            return True
+        try:
+            existing = await self.search_existing(meta)
+        except Exception as error:
+            logger.warning(
+                f"[yellow]{self.tracker}: could not check for an existing DUAL release: {error}[/yellow]"
+            )
+            return True
+        for result in existing:
+            name = str(result.get("name") or "")
+            if not _GROUP_ALREADY_MARKED_RE.search(name):
+                continue
+            logger.info(
+                f"{self.tracker}: [bold red]a DUAL release already exists on the tracker, "
+                "so new releases must be DUAL. Skipping upload...[/bold red]"
+            )
+            return False
+        return True
 
     def _video_release_skip_reason(self, meta: Meta) -> str:
         release_type = str(meta.type or "").casefold()
