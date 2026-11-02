@@ -24,6 +24,8 @@ def _make_meta(**overrides: Any) -> Meta:
         "clean_name": "Example Movie 2024 1080p WEB-DL H.264",
         "scene_name": "",
         "basename_no_ext": "Example.Movie.2024.1080p.WEB-DL.x264",
+        "imdb_id": 1234567,
+        "audio_languages": ["English"],
         "image_list": [],
     }
     values.update(overrides)
