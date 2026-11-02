@@ -288,3 +288,83 @@ def test_capybarabr_book_name_strips_every_repeated_author_segment() -> None:
     assert _tracker()._book_name(meta) == (
         "O Obstáculo É o Caminho - Ryan Holiday [2014]"
     )
+
+
+def _video_tracker(*, api_key: str = "test-key") -> CapybaraBR:
+    tracker = _tracker()
+    tracker.api_key = api_key
+    return tracker
+
+
+def _video_meta(**values: object) -> Meta:
+    defaults: dict[str, object] = {
+        "category": "TV",
+        "dual_audio": False,
+        "path": "Show.S03.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX.mkv",
+        "name": "Show.S03.1080p.AMZN.WEB-DL.DDP5.1.H.264-FLUX",
+    }
+    defaults.update(values)
+    return Meta(**defaults)
+
+
+@pytest.mark.asyncio
+async def test_capybarabr_skips_mono_when_a_dual_release_exists() -> None:
+    tracker = _video_tracker()
+    tracker.search_existing = AsyncMock(  # type: ignore[method-assign]
+        return_value=[{"name": "Show.S03.1080p.BluRay.DUAL-FLUX"}]
+    )
+    assert await tracker._dual_release_allowed(_video_meta()) is False
+
+
+@pytest.mark.asyncio
+async def test_capybarabr_allows_dual_when_a_dual_release_exists() -> None:
+    tracker = _video_tracker()
+    tracker.search_existing = AsyncMock(  # type: ignore[method-assign]
+        return_value=[{"name": "Show.S03.1080p.BluRay.DUAL-FLUX"}]
+    )
+    meta = _video_meta(dual_audio=True)
+    assert await tracker._dual_release_allowed(meta) is True
+    tracker.search_existing.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_capybarabr_allows_release_without_a_dual_match() -> None:
+    tracker = _video_tracker()
+    tracker.search_existing = AsyncMock(  # type: ignore[method-assign]
+        return_value=[{"name": "Show.S03.1080p.BluRay-GROUP"}]
+    )
+    assert await tracker._dual_release_allowed(_video_meta()) is True
+
+
+@pytest.mark.asyncio
+async def test_capybarabr_fails_open_when_the_search_raises() -> None:
+    tracker = _video_tracker()
+    tracker.search_existing = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("search down")
+    )
+    assert await tracker._dual_release_allowed(_video_meta()) is True
+
+
+@pytest.mark.asyncio
+async def test_capybarabr_fails_open_without_an_api_key() -> None:
+    tracker = _video_tracker(api_key="")
+    tracker.search_existing = AsyncMock()  # type: ignore[method-assign]
+    assert await tracker._dual_release_allowed(_video_meta()) is True
+    tracker.search_existing.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Show.S03.1080p.BluRay.Dual.Audio-FLUX",
+        "Show.S03.1080p.BluRay.DUAL-FLUX",
+        "Show.S03.1080p.BluRay.MULTI-FLUX",
+    ],
+)
+async def test_capybarabr_detects_dual_and_multi_separators(name: str) -> None:
+    tracker = _video_tracker()
+    tracker.search_existing = AsyncMock(  # type: ignore[method-assign]
+        return_value=[{"name": name}]
+    )
+    assert await tracker._dual_release_allowed(_video_meta()) is False
