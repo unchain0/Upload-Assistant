@@ -25,7 +25,7 @@ class CZTeam(NEXUSPHP):
     source_flag = "[czteam.me] CZTeam"
     torrent_url = f"{base_url}/details.php?id="
     tracker_urls = ("https://czteam.me",)
-    supported_categories = ("MOVIE", "TV")
+    supported_categories = ("MOVIE", "TV", "GAME", "MUSIC", "XXX")
     allows_bloated_audio = True
     banned_groups: tuple[str, ...] = ()
 
@@ -59,8 +59,99 @@ class CZTeam(NEXUSPHP):
             return 0
         return self._configured_ids(kind).get(key, 0)
 
+    _CATEGORY_IDS: ClassVar[dict[str, int]] = {
+        "ANIME": 23,
+        "DOCS": 25,
+        "GAME": 21,
+        "IMAGES": 24,
+        "MAC": 31,
+        "MOBILE": 9,
+        "MOVIE": 29,
+        "MUSIC": 6,
+        "PROGRAMS": 22,
+        "SOFTWARE": 22,
+        "SPORTS": 32,
+        "TV": 5,
+        "XXX": 1,
+    }
+    _RESOLUTIONS: ClassVar[tuple[str, ...]] = (
+        "480p",
+        "576p",
+        "720p",
+        "1080p",
+        "2160p",
+    )
+    _CODECS: ClassVar[tuple[str, ...]] = (
+        "H.264",
+        "H.265",
+        "x264",
+        "x265",
+        "XviD",
+        "AV1",
+    )
+    _CONTAINERS: ClassVar[tuple[str, ...]] = (
+        "MKV",
+        "AVI",
+        "MP4",
+        "TS",
+        "ISO",
+    )
+    _SOURCES: ClassVar[tuple[str, ...]] = (
+        "BluRay",
+        "BDRip",
+        "WEB-DL",
+        "WEBRip",
+        "HDTV",
+        "DVD",
+        "DVDRip",
+    )
+
     def get_category(self, meta: Meta) -> int:
-        return self._mapped_id("category", meta.category)
+        configured = self._mapped_id("category", meta.category)
+        if configured:
+            return configured
+        category = str(meta.category or "").strip().upper()
+        if category == "MOVIE":
+            return self._movie_category(meta)
+        if category == "TV":
+            return 5 if str(meta.resolution or "") in {"720p", "1080p", "2160p"} else 7
+        if category == "GAME":
+            return self._game_category(meta)
+        if category == "MUSIC":
+            format_value = str(meta.format or meta.type or "").upper()
+            return 35 if format_value in {"FLAC", "ALAC", "WAV", "AIFF", "DSD"} else 6
+        return self._CATEGORY_IDS.get(category, 0)
+
+    @staticmethod
+    def _movie_category(meta: Meta) -> int:
+        if meta.is_disc:
+            return 36
+        release_type = str(meta.type or "").upper()
+        if release_type in {"XVID", "DVDRIP"}:
+            return 19
+        if "3D" in str(meta.name or "").upper():
+            return 37
+        return 29
+
+    @staticmethod
+    def _game_category(meta: Meta) -> int:
+        platform = str(meta.platform or "").casefold()
+        if any(
+            value in platform
+            for value in ("playstation", "xbox", "switch", "nintendo", "wii", "ps4", "ps5")
+        ):
+            return 12
+        if meta.is_disc:
+            return 4
+        return 21
+
+    @classmethod
+    def _enum_value(cls, value: object, allowed: tuple[str, ...]) -> str:
+        text = str(value or "").strip()
+        for candidate in allowed:
+            if text.casefold() == candidate.casefold():
+                return candidate
+        return ""
 
     def get_type(self, meta: Meta) -> int:
         return self._mapped_id("type", meta.type)

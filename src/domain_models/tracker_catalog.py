@@ -105,7 +105,7 @@ _DEFINITIONS = {
         "CINEMATIK", "unit3d_api", ("TV", "MOVIE"), ("cinematik.net",), False
     ),
     "CZTEAM": TrackerDefinition(
-        "CZTEAM", "cookies", ("MOVIE", "TV"), ("czteam.me",), False
+        "CZTEAM", "cookies", ("MOVIE", "TV", "GAME", "MUSIC", "XXX"), ("czteam.me",), False
     ),
     "CINEMAZ": TrackerDefinition(
         "CINEMAZ",
