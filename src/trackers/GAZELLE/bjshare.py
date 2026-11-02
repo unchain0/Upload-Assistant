@@ -810,7 +810,7 @@ class BJShare:
             menu_screenshots=False,
             nfo=False,
             screenshots=False,
-            signature=f"[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]Compartilhado com {meta.ua_name} {meta.current_version} (fork)[/size][/url][/align]",
+            signature=f"[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]Compartilhado com {meta.ua_name} {meta.current_version} [/size][/url][/align]",
         )
 
     def get_trailer(self, meta: Meta) -> str:

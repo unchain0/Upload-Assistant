@@ -471,8 +471,8 @@ class TorrentCreator:
                     exclude_globs=exclude,
                     include_globs=include,
                     creation_date=datetime.now(UTC),
-                    comment=f"{meta.ua_name} (fork)",
-                    created_by=f"{meta.ua_name} (fork)",
+                    comment=f"{meta.ua_name} ",
+                    created_by=f"{meta.ua_name} ",
                     piece_size=piece_size,
                 )
                 progress_id = f"torrent-hash-{meta.uuid}"

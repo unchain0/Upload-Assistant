@@ -83,8 +83,8 @@ class TorrentManifest:
     def _normalize(source: str | Path) -> Torrent:
         torrent = Torrent.read(source)
         torrent.trackers = ["https://fake.tracker"]
-        torrent.comment = "Upload-Assistant (fork)"
-        torrent.created_by = "Upload-Assistant (fork)"
+        torrent.comment = "Upload-Assistant"
+        torrent.created_by = "Upload-Assistant"
         info = torrent.metainfo["info"]
         valid_info = {"name", "piece length", "pieces", "private", "source", "files", "length"}
         for key in list(info):
