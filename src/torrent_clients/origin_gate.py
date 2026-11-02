@@ -17,6 +17,7 @@ from typing import Any, NamedTuple
 from urllib.parse import urlsplit
 
 _ANNOUNCE_KEYS = ("announce_url", "tracker_urls", "base_url", "tracker_url")
+_EXTERNAL_ORIGIN_HOSTS = ("myanonamouse.net", "t.myanonamouse.net")
 _REGISTRY_HOSTS: set[str] | None = None
 
 
@@ -70,9 +71,24 @@ def _tracker_class_hosts() -> set[str]:
     return hosts
 
 
+def _configured_extra_hosts(config: Mapping[str, Any]) -> set[str]:
+    hosts: set[str] = set()
+    defaults = config.get("DEFAULT")
+    if not isinstance(defaults, Mapping):
+        return hosts
+    for url in _string_urls(defaults.get("origin_allowed_hosts")):
+        host = announce_host(url)
+        if host:
+            hosts.add(host)
+    if str(defaults.get("mam_api_key", "")).strip():
+        hosts.update(_EXTERNAL_ORIGIN_HOSTS)
+    return hosts
+
+
 def configured_origin_hosts(config: Mapping[str, Any]) -> set[str]:
     """Hosts this instance accepts as torrent origins."""
     hosts = set(_tracker_class_hosts())
+    hosts.update(_configured_extra_hosts(config))
     trackers = config.get("TRACKERS")
     if not isinstance(trackers, Mapping):
         return hosts
