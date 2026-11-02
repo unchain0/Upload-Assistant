@@ -50,3 +50,32 @@ def test_unprepared_single_file_is_still_rejected(tmp_path: Path) -> None:
         filelist=[str(book)],
     )
     assert _tracker()._book_folder_policy(meta, meta.filelist, False) is False
+
+
+def test_generated_ebook_torrent_matches_the_site_single_file_shape(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    from src.integrations.torrent.torrent_creator import TorrentCreator
+
+    release = tmp_path / "release"
+    release.mkdir()
+    book = release / "Author - Title (2020) [ENG 9780000000000].epub"
+    book.write_bytes(b"x" * 1000)
+    meta = Meta(
+        category="BOOK",
+        audiobook=False,
+        uuid="abc",
+        base_dir=str(tmp_path),
+        trackers=["ZENITH"],
+    )
+    prepared = _zenith_isolated_meta(meta, str(release))
+    (tmp_path / "tmp" / "abc-zenith").mkdir(parents=True)
+    torrent = asyncio.run(
+        TorrentCreator.create_torrent(prepared, prepared.path, "BASE")
+    )
+    info = torrent.metainfo["info"]
+    assert info["name"] == book.name
+    assert "files" not in info
+    assert info["length"] == 1000
