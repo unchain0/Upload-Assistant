@@ -1493,7 +1493,8 @@ def test_darkpeers_enforces_screenshot_count_rules_movie_tv():
     assert _additional_checks(Meta(**base, screens=2)) is False
     assert _additional_checks(Meta(**base, screens=3)) is True
     assert _additional_checks(Meta(**base, screens=5)) is True
-    assert _additional_checks(Meta(**base, screens=6)) is False
+    assert _additional_checks(Meta(**base, screens=6)) is True
+    assert _additional_checks(Meta(**base, screens=7)) is False
 
 
 def test_darkpeers_rejects_invalid_screenshot_count_value():
@@ -1539,9 +1540,27 @@ def test_darkpeers_rejects_multi_season_and_video_archives():
         screens=3,
         filelist=["Movie.part01.rar"],
     )
+    multipart = Meta(
+        category="MOVIE",
+        unattended=True,
+        audio_languages=["English"],
+        resolution="1080p",
+        screens=3,
+        filelist=["Movie.r01"],
+    )
+    split = Meta(
+        category="MOVIE",
+        unattended=True,
+        audio_languages=["English"],
+        resolution="1080p",
+        screens=3,
+        filelist=["Movie.002"],
+    )
 
     assert _additional_checks(seasons) is False
     assert _additional_checks(archive) is False
+    assert _additional_checks(multipart) is False
+    assert _additional_checks(split) is False
 
 
 def test_darkpeers_tv_scope_ignores_parent_directory_and_detects_episode_season():

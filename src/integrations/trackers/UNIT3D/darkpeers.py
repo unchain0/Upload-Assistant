@@ -533,7 +533,12 @@ class DarkPeers(UNIT3D):
     def _archive_filename(filelist: list[object]) -> str:
         for item in filelist:
             path = Path(str(item))
-            if path.suffix.lower() in {".rar", ".zip", ".7z"}:
+            suffix = path.suffix.lower()
+            if suffix in {".rar", ".zip", ".7z"}:
+                return path.name
+            if len(suffix) == 4 and suffix[1] == "r" and suffix[2:].isdigit():
+                return path.name
+            if len(suffix) == 4 and suffix[1:].isdigit():
                 return path.name
         return ""
 
@@ -656,9 +661,9 @@ class DarkPeers(UNIT3D):
                 f"{self.tracker}: [bold red]requires at least 3 screenshots for Movie/TV uploads. Skipping upload."
             )
             return False
-        if screenshot_count > 5:
+        if screenshot_count > 6:
             logger.info(
-                f"{self.tracker}: [bold red]supports at most 5 screenshots for Movie/TV uploads. Skipping upload."
+                f"{self.tracker}: [bold red]supports at most 6 screenshots for Movie/TV uploads. Skipping upload."
             )
             return False
         return True
