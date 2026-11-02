@@ -89,6 +89,10 @@ def _mark_zenith_skipped(shared_meta: Meta, message: str) -> None:
 def _zenith_preparation_required(meta: Meta, config: dict[str, Any]) -> bool:
     audiobook_required = should_prepare_zenith_audiobook(meta, config)
     ebook_required = should_prepare_zenith_ebook(meta, config)
+    logger.info(
+        f"ZENITH zentag gates: audiobook={audiobook_required} "
+        f"ebook={ebook_required} path={meta.path!r}"
+    )
     return audiobook_required or ebook_required
 
 
@@ -151,6 +155,10 @@ async def prepare_tracker_meta(
 
     preparation_required = _zenith_preparation_required(tracker_meta, config)
     prepared_book = await _zenith_prepared_path(tracker_meta, config)
+    logger.info(
+        f"ZENITH zentag preparation result: {prepared_book!r} "
+        f"(required={preparation_required})"
+    )
     if _required_zenith_preparation_failed(
         preparation_required, prepared_book
     ):
