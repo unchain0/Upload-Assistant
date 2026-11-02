@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from src.domain_models.release import Meta
 from src.integrations.trackers.UNIT3D.znth import Zenith
 
@@ -65,3 +67,34 @@ def test_zenith_book_identifier_data_sends_isbn_and_asin() -> None:
             Meta(category="BOOK", manga=True, isbn="9780000000000")
         )
     ) == {}
+
+
+def test_zenith_ebook_filename_must_include_the_edition_isbn() -> None:
+    tracker = _tracker()
+    meta = Meta(
+        category="BOOK",
+        type="EPUB",
+        isbn="9781541706194",
+        filelist=["Author - Title (2025) 9781541706194.epub"],
+    )
+    assert tracker._ebook_format_policy(meta) is True
+
+
+def test_zenith_ebook_without_the_isbn_in_the_filename_is_blocked(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tracker = _tracker()
+    meta = Meta(
+        category="BOOK",
+        type="EPUB",
+        isbn="9781541706194",
+        filelist=["Author - Title (2025).epub"],
+    )
+    assert tracker._ebook_format_policy(meta) is False
+    assert "filename must include the edition ISBN" in caplog.text
+
+
+def test_zenith_ebook_without_isbn_stops_on_the_identifier_rule() -> None:
+    tracker = _tracker()
+    meta = Meta(category="BOOK", type="EPUB", isbn="", asin="")
+    assert asyncio.run(tracker._book_format_policy(meta, [], False)) is False

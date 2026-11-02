@@ -1299,12 +1299,48 @@ class Zenith(UNIT3D):
         return True
 
     def _ebook_format_policy(self, meta: Meta) -> bool:
-        if _book_format(meta) in {"EPUB", "PDF", "MOBI", "AZW3", "DJVU"}:
+        if _book_format(meta) not in {"EPUB", "PDF", "MOBI", "AZW3", "DJVU"}:
+            logger.info(
+                f"{self.tracker}: [bold red]Ebooks must be EPUB, PDF, MOBI, AZW3, or DJVU. Skipping upload...[/bold red]"
+            )
+            return False
+        return self._ebook_isbn_name_policy(meta)
+
+    def _ebook_isbn_name_policy(self, meta: Meta) -> bool:
+        isbn = str(meta.isbn or "").strip()
+        if not isbn:
+            return True
+        names = Zenith._ebook_file_stems(meta)
+        if not names:
+            return True
+        if any(isbn in name for name in names):
             return True
         logger.info(
-            f"{self.tracker}: [bold red]Ebooks must be EPUB, PDF, MOBI, AZW3, or DJVU. Skipping upload...[/bold red]"
+            f"{self.tracker}: [bold red]The ebook filename must include the edition ISBN "
+            f"({isbn}). Skipping upload...[/bold red]"
         )
         return False
+
+    @staticmethod
+    def _ebook_file_stems(meta: Meta) -> list[str]:
+        stems = [
+            Zenith._file_stem(name)
+            for name in Zenith._content_names(meta.filelist)
+        ]
+        if meta.basename_no_ext:
+            stems.append(str(meta.basename_no_ext))
+        return [stem for stem in stems if stem]
+
+    @staticmethod
+    def _content_names(value: Any) -> list[str]:
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        return [str(item) for item in value if str(item).strip()]
+
+    @staticmethod
+    def _file_stem(name: str) -> str:
+        base = name.replace("\\", "/").rsplit("/", 1)[-1]
+        return base.rsplit(".", 1)[0]
 
     def _book_identity_policy(self, meta: Meta) -> bool:
         if not self._book_author_policy(meta):
