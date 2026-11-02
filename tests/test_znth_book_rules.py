@@ -69,18 +69,24 @@ def test_zenith_book_identifier_data_sends_isbn_and_asin() -> None:
     ) == {}
 
 
-def test_zenith_ebook_filename_must_include_the_edition_isbn() -> None:
+def test_zenith_accepts_the_official_ebook_filename_examples() -> None:
     tracker = _tracker()
-    meta = Meta(
-        category="BOOK",
-        type="EPUB",
-        isbn="9781541706194",
-        filelist=["Author - Title (2025) 9781541706194.epub"],
-    )
-    assert tracker._ebook_format_policy(meta) is True
+    for name in (
+        "J.K. Rowling - Harry Potter #4 - Harry Potter and the Goblet of Fire (2000) [ENG UK 9781781100103 Retail].epub",
+        "Lisa Jewell - None of This is True (2023) [ENG 9781804940228 Retail].epub",
+        "Brian Herbert - codelude to Dune #1 - House Atreides (1999) [ENG 0553897829].epub",
+        "Janet Valade - PHP, MySQL, JavaScript & Html5 All-In-One for Dummies (2013) [ENG 3rd 9781118213704].epub",
+    ):
+        meta = Meta(
+            category="BOOK",
+            type="EPUB",
+            isbn="9781781100103",
+            filelist=[name],
+        )
+        assert tracker._ebook_format_policy(meta) is True
 
 
-def test_zenith_ebook_without_the_isbn_in_the_filename_is_blocked(
+def test_zenith_rejects_an_ebook_filename_outside_the_pattern(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     tracker = _tracker()
@@ -91,7 +97,23 @@ def test_zenith_ebook_without_the_isbn_in_the_filename_is_blocked(
         filelist=["Author - Title (2025).epub"],
     )
     assert tracker._ebook_format_policy(meta) is False
-    assert "filename must include the edition ISBN" in caplog.text
+    assert "does not follow" in caplog.text
+
+
+def test_zenith_rejects_forbidden_characters_in_the_ebook_filename(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tracker = _tracker()
+    meta = Meta(
+        category="BOOK",
+        type="EPUB",
+        isbn="9781541706194",
+        filelist=[
+            "Author - Title: Subtitle (2025) [ENG 9781541706194].epub"
+        ],
+    )
+    assert tracker._ebook_format_policy(meta) is False
+    assert "must be replaced" in caplog.text
 
 
 def test_zenith_ebook_without_isbn_stops_on_the_identifier_rule() -> None:
