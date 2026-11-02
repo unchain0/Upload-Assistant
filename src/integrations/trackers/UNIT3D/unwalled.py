@@ -367,6 +367,9 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
                 stem,
             ):
                 return "Each episode must be one complete file, not a split part."
+        numbering = self._numbering_skip_reason(meta)
+        if numbering:
+            return numbering
         language = str(meta.original_language or "").strip()
         title = str(meta.podcast_title or meta.name or "").strip()
         if (
@@ -375,6 +378,36 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
             and not re.search(r"\([^)]+\)\s*$", title)
         ):
             return "A non-English podcast title must end with its language in parentheses."
+        return ""
+
+    _NUMBER_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"^(?P<num>\d{1,4})(?:\.(?P<sub>\d{1,3}))?(?:[^0-9]|$)"
+    )
+
+    @classmethod
+    def _numbering_skip_reason(cls, meta: Meta) -> str:
+        entries: list[tuple[int, int, str]] = []
+        for value in meta.filelist:
+            name = Path(str(value)).name
+            match = cls._NUMBER_RE.match(name)
+            if not match:
+                return ""
+            entries.append(
+                (
+                    int(match.group("num")),
+                    int(match.group("sub") or 0),
+                    name,
+                )
+            )
+        if len(entries) < 2:
+            return ""
+        text_order = [name for _num, _sub, name in sorted(entries, key=lambda item: item[2])]
+        numeric_order = [name for _num, _sub, name in sorted(entries)]
+        if text_order != numeric_order:
+            return (
+                "File names must sort in release order; pad the numbers "
+                "(1..9, 01..99, 001+) so the text order matches the episode order."
+            )
         return ""
 
     @staticmethod
