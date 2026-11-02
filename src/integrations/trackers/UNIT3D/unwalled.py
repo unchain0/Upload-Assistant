@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import httpx
 
@@ -319,6 +319,12 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
         return self._podcast_announce_check(meta)
 
     def _podcast_file_checks(self, meta: Meta) -> bool:
+        reason = self._podcast_payload_reason(meta)
+        if reason:
+            logger.info(
+                f"{self.tracker}: [bold red]{reason} Skipping upload...[/bold red]"
+            )
+            return False
         archive = self._compressed_file_name(meta)
         if archive:
             logger.info(
@@ -340,6 +346,36 @@ class Unwalled(UnwalledValidationMixin, UNIT3D):
             logger.info(f"{self.tracker}: [bold red]{error}[/bold red]")
             return False
         return True
+
+    _AUDIO_EXTENSIONS: ClassVar[frozenset[str]] = frozenset(
+        {".aac", ".ac3", ".flac", ".m4a", ".m4b", ".mp3", ".ogg", ".opus", ".wav"}
+    )
+    _VIDEO_EXTENSIONS: ClassVar[frozenset[str]] = frozenset(
+        {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".ts", ".webm"}
+    )
+
+    def _podcast_payload_reason(self, meta: Meta) -> str:
+        suffixes = {
+            Path(str(value)).suffix.casefold() for value in meta.filelist
+        }
+        if suffixes & self._AUDIO_EXTENSIONS and suffixes & self._VIDEO_EXTENSIONS:
+            return "Audio and video must be uploaded as separate torrents."
+        for value in meta.filelist:
+            stem = Path(str(value)).stem
+            if re.search(
+                r"(?i)(?:^|[.\s_-])(?:part\s*\d{1,3}|cd\s*\d{1,2}|disc\s*\d{1,2})(?:$|[.\s_-])",
+                stem,
+            ):
+                return "Each episode must be one complete file, not a split part."
+        language = str(meta.original_language or "").strip()
+        title = str(meta.podcast_title or meta.name or "").strip()
+        if (
+            language
+            and language.casefold() not in {"english", "en", "eng"}
+            and not re.search(r"\([^)]+\)\s*$", title)
+        ):
+            return "A non-English podcast title must end with its language in parentheses."
+        return ""
 
     @staticmethod
     def _compressed_file_name(meta: Meta) -> str:

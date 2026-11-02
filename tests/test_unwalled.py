@@ -1483,3 +1483,34 @@ def test_unwalled_rejects_compressed_podcast_media() -> None:
 def test_unwalled_allows_plain_podcast_audio() -> None:
     meta = Meta(category="PODCAST", filelist=["Episode 1.m4b", "cover.jpg"])
     assert _tracker()._compressed_file_name(meta) == ""
+
+
+def test_unwalled_rejects_mixed_audio_and_video() -> None:
+    tracker = _tracker()
+    meta = Meta(category="PODCAST", filelist=["episode.m4b", "episode.mkv"])
+    assert "separate torrents" in tracker._podcast_payload_reason(meta)
+
+
+def test_unwalled_rejects_split_episode_parts() -> None:
+    tracker = _tracker()
+    meta = Meta(category="PODCAST", filelist=["episode.part1.mp3"])
+    assert "split part" in tracker._podcast_payload_reason(meta)
+
+
+def test_unwalled_requires_the_language_for_a_non_english_title() -> None:
+    tracker = _tracker()
+    title = "Show [2024/AUDIO - 128kbps]"
+    assert "language" in tracker._podcast_payload_reason(
+        Meta(category="PODCAST", podcast_title=title, original_language="Danish", filelist=["a.mp3"])
+    )
+    assert tracker._podcast_payload_reason(
+        Meta(
+            category="PODCAST",
+            podcast_title="Show [2024/AUDIO - 128kbps] (Danish)",
+            original_language="Danish",
+            filelist=["a.mp3"],
+        )
+    ) == ""
+    assert tracker._podcast_payload_reason(
+        Meta(category="PODCAST", podcast_title=title, original_language="English", filelist=["a.mp3"])
+    ) == ""
