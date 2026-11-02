@@ -49,15 +49,41 @@ def test_exact_title_and_author_resolve_the_asin() -> None:
     assert asin == "B000000001"
 
 
-def test_ambiguous_titles_do_not_resolve() -> None:
+def test_same_title_editions_resolve_to_the_first() -> None:
     AudibleManager._cache.clear()
     client = _Client(
         _Response(
             200,
             {
                 "products": [
+                    _product("B000000001", "Daring Greatly", "Brené Brown"),
+                    _product("B000000003", "Daring Greatly", "Brené Brown"),
+                ]
+            },
+        )
+    )
+    assert (
+        asyncio.run(
+            AudibleManager().asin_by_title_author(
+                "Daring Greatly", "Brené Brown", client=client  # type: ignore[arg-type]
+            )
+        )
+        == "B000000001"
+    )
+
+
+def test_divergent_titles_do_not_resolve(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    AudibleManager._cache.clear()
+    monkeypatch.setattr(
+        AudibleManager, "_title_similarity", classmethod(lambda cls, a, b: 1.0)
+    )
+    client = _Client(
+        _Response(
+            200,
+            {
+                "products": [
                     _product("B000000001", "Database Internals", "Alex Petrov"),
-                    _product("B000000003", "Database Internals", "Alex Petrov"),
+                    _product("B000000003", "Internals Database", "Alex Petrov"),
                 ]
             },
         )
