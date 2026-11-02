@@ -43,10 +43,18 @@ def _zentag_auto_allowed(meta: Meta, config: dict[str, Any]) -> bool:
 def should_prepare_zenith_audiobook(
     meta: Meta, config: dict[str, Any]
 ) -> bool:
-    if not _zentag_auto_allowed(meta, config):
+    reason = _auto_skip_reason(meta, config)
+    if reason:
+        logger.info(f"ZENITH: not preparing the audiobook with zentag: {reason}")
         return False
     source = Path(str(meta.path or "")).expanduser().resolve()
-    return _contains_m4b(source)
+    if not _contains_m4b(source):
+        logger.info(
+            "ZENITH: not preparing the audiobook with zentag: "
+            f"no M4B file under {source}"
+        )
+        return False
+    return True
 
 
 def _resolved_ebook_path(value: object) -> Path | None:
@@ -78,10 +86,39 @@ def _plain_ebook(meta: Meta) -> bool:
     return not any((meta.comic, meta.manga, meta.magazine, meta.newspaper))
 
 
+def _auto_skip_reason(meta: Meta, config: dict[str, Any]) -> str:
+    if meta.site_check:
+        return "site_check is enabled"
+    if not meta.unattended:
+        return "the run is not unattended"
+    if not _zenith_selected(meta):
+        return "ZENITH is not among the selected trackers"
+    if not config.get("DEFAULT", {}).get("auto_zentag", True):
+        return "auto_zentag is disabled in DEFAULT"
+    return ""
+
+
+def _ebook_skip_reason(meta: Meta) -> str:
+    if meta.category != "BOOK":
+        return f"category is {meta.category!r}, not BOOK"
+    if meta.audiobook:
+        return "the book is an audiobook"
+    if any((meta.comic, meta.manga, meta.magazine, meta.newspaper)):
+        return "the book is a comic, manga, magazine or newspaper"
+    if _ebook_source(meta) is None:
+        return (
+            f"no ebook file could be resolved (path={meta.path!r}, "
+            f"filelist={list(meta.filelist)!r})"
+        )
+    return ""
+
+
 def should_prepare_zenith_ebook(meta: Meta, config: dict[str, Any]) -> bool:
-    if not _zentag_auto_allowed(meta, config) or not _plain_ebook(meta):
+    reason = _auto_skip_reason(meta, config) or _ebook_skip_reason(meta)
+    if reason:
+        logger.info(f"ZENITH: not preparing the ebook with zentag: {reason}")
         return False
-    return _ebook_source(meta) is not None
+    return True
 
 
 async def _run_process(command: list[str]) -> tuple[int, str, str]:
