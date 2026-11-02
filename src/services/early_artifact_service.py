@@ -128,11 +128,23 @@ def _early_torrent_paths(meta: Meta) -> tuple[str, Path, Path]:
     )
 
 
+def _single_file_book(meta: Meta) -> bool:
+    """A prepared ebook must be hashed as one file, never from a folder copy."""
+    return bool(
+        str(meta.category or "").upper() == "BOOK"
+        and not meta.audiobook
+        and not meta.isdir
+        and len(meta.filelist) == 1
+    )
+
+
 def _reusable_torrent_exists(value: object) -> bool:
     return bool(value and Path(str(value)).exists())
 
 
 async def _find_reusable_torrent(meta: Meta, client: Clients) -> str | None:
+    if _single_file_book(meta):
+        return None
     reuse_torrent = meta.reuse_torrent_path
     if _reusable_torrent_exists(reuse_torrent):
         return str(reuse_torrent)
