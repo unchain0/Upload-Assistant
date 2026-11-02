@@ -44,7 +44,7 @@ class AudibleManager:
     def _candidate_asin(
         cls, products: list[Any], title: str, author: str
     ) -> str:
-        matches: set[str] = set()
+        matches: list[tuple[str, str]] = []
         for product in products:
             if not isinstance(product, dict):
                 continue
@@ -54,14 +54,18 @@ class AudibleManager:
                 continue
             asin = str(product.get("asin", "")).strip()
             if asin:
-                matches.add(asin)
-        if len(matches) == 1:
-            return matches.pop()
-        if len(matches) > 1:
-            logger.info(
-                f"{len(matches)} Audible results match the title and author; "
-                "refusing to guess an ASIN"
-            )
+                matches.append((asin, _normalized(product.get("title"))))
+        if not matches:
+            return ""
+        titles = {normalized for _asin, normalized in matches}
+        if len(titles) == 1:
+            # Same title and author, different marketplaces/editions: the
+            # first result is the US edition on the default marketplace.
+            return matches[0][0]
+        logger.info(
+            f"{len(matches)} Audible results match but their titles differ; "
+            "refusing to guess an ASIN"
+        )
         return ""
 
     async def asin_by_title_author(
@@ -84,7 +88,7 @@ class AudibleManager:
                     "title": title,
                     "author": author,
                     "num_results": 10,
-                    "response_groups": "product_desc",
+                    "response_groups": "contributors,product_desc",
                 },
             )
         except Exception as error:
