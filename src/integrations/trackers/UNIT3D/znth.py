@@ -1228,7 +1228,9 @@ class Zenith(UNIT3D):
             return False
         if not self._book_identity_policy(meta):
             return False
-        return self._book_hygiene_policy(meta, filelist)
+        if not self._book_hygiene_policy(meta, filelist):
+            return False
+        return self._ebook_description_policy(meta)
 
     @staticmethod
     def _defer_zentag_validation(meta: Meta) -> bool:
@@ -1403,6 +1405,18 @@ class Zenith(UNIT3D):
         if not self._book_work_policy(meta):
             return False
         return self._book_language_policy(meta)
+
+    def _ebook_description_policy(self, meta: Meta) -> bool:
+        if meta.audiobook or _is_misc(meta):
+            return True
+        if meta.publisher:
+            return True
+        logger.info(
+            f"{self.tracker}: [yellow]No publisher is available for the required "
+            "description; sending the ebook to the moderation queue.[/yellow]"
+        )
+        meta.modq = True
+        return True
 
     _SITE_MARKERS: ClassVar[tuple[str, ...]] = (
         "z-lib",
