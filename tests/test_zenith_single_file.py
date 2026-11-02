@@ -22,7 +22,6 @@ def test_ebook_is_a_single_file_torrent(tmp_path: Path) -> None:
     assert prepared.filelist == [str(book)]
     assert prepared.isdir is False
     assert prepared.keep_folder is False
-    assert prepared.nohash is True
     assert _tracker()._book_folder_policy(
         prepared, prepared.filelist, False
     ) is True

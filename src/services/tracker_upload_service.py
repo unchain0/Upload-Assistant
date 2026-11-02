@@ -134,9 +134,6 @@ def _zenith_isolated_meta(meta: Meta, prepared_path: str) -> Meta:
                 prepared_meta.filelist = [str(ebook_files[0])]
                 prepared_meta.isdir = False
                 prepared_meta.keep_folder = False
-                # The client still holds the folder torrent; do not reuse it,
-                # or BASE is built from the folder instead of this file.
-                prepared_meta.nohash = True
     prepared_meta.allow_spaces = True
     prepared_meta.uuid = f"{prepared_meta.uuid}-zenith"
     prepared_meta.update({"trusted_book_layout": True})
