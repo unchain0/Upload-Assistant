@@ -1910,6 +1910,16 @@ def _repair_final_book_title(
     ctx.meta.title = _strip_book_format_suffix(str(ctx.meta.title or ""))
 
 
+async def _apply_audnexus_narrator(meta: Meta) -> None:
+    if not meta.audiobook or meta.narrator or not meta.asin:
+        return
+    from src.integrations.external_apis.audnexus import AudnexusManager
+
+    narrator = await AudnexusManager().narrator_by_asin(str(meta.asin))
+    if narrator:
+        meta.narrator = narrator
+
+
 async def gather_book_prep(
     meta: Meta,
     videopath: str,
@@ -1931,6 +1941,7 @@ async def gather_book_prep(
     local_title = _apply_exact_edition(
         ctx, local_title, local_author, mam_data, google_data, open_data
     )
+    await _apply_audnexus_narrator(meta)
     _repair_final_book_title(ctx, local_title, fallback_title)
     _restore_comic_flags(ctx)
     _repair_swapped_path_identity(ctx, fallback_author, fallback_title)
