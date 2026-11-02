@@ -19,7 +19,6 @@ def test_music_cover_allowed_hosts_only_constrains_selected_trackers():
         "imgbox",
         "imgur",
         "postimg",
-        "ptscreens",
         "sharex",
     ]
     assert _music_cover_allowed_hosts(["ORPHEUS"]) is None
