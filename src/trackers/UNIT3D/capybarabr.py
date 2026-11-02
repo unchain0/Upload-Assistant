@@ -14,6 +14,8 @@ from src.trackers.common import Common
 from src.trackers.UNIT3D import UNIT3D
 from src.uploadscreens import upload_image_task_with_stats as upload_image_task
 
+_DUAL_RELEASE_RE = re.compile(r"(?i)(?:^|[.\s])(?:dual|multi)(?:$|[.\s-])")
+
 
 class CapybaraBR(UNIT3D):
     """
@@ -294,6 +296,29 @@ class CapybaraBR(UNIT3D):
 
         return {"name": re.sub(r"\s{2,}", " ", cbr_name)}
 
+    async def _dual_release_allowed(self, meta: Meta) -> bool:
+        """Reject a mono release when the tracker already holds a DUAL one.
+
+        Staff require new releases of a title to carry DUAL audio once any
+        DUAL release exists, regardless of quality. Missing API key or a
+        failing search fails open so the check never blocks blindly.
+        """
+        if meta.dual_audio:
+            return True
+        if not str(getattr(self, "api_key", "") or "").strip():
+            logger.debug(f"{self.tracker}: api_key is not configured; skipping the DUAL release check")
+            return True
+        try:
+            existing = await self.search_existing(meta)
+        except Exception as error:
+            logger.warning(f"[yellow]{self.tracker}: could not check for an existing DUAL release: {error}[/yellow]")
+            return True
+        for result in existing:
+            if _DUAL_RELEASE_RE.search(str(result.get("name") or "")):
+                logger.info(f"{self.tracker}: [bold red]a DUAL release already exists on the tracker, so new releases must be DUAL. Skipping upload...[/bold red]")
+                return False
+        return True
+
     async def get_additional_data(self, meta: Meta) -> dict[str, str]:
         return {
             "mod_queue_opt_in": await self.get_flag(meta, "modq"),
@@ -307,6 +332,9 @@ class CapybaraBR(UNIT3D):
         if meta.category in ["MOVIE", "TV"]:
             upload_type = str(meta.type).lower()
             upload_source = str(meta.source).lower()
+
+            if not await self._dual_release_allowed(meta):
+                return False
 
             # Encodes must include the "Encode settings" field in the MediaInfo.
             if upload_type == "encode" and not meta.has_encode_settings:
