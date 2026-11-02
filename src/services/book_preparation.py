@@ -1294,6 +1294,40 @@ def _apply_path_title(meta: Meta, fallback_title: str) -> None:
         )
 
 
+_GENERIC_BOOK_DIRS = frozenset(
+    {"books", "audiobooks", "book", "audiobook", "media", "library", "downloads"}
+)
+
+
+def _apply_audiobook_path_identity(ctx: _BookPrepContext) -> None:
+    if not ctx.meta.audiobook:
+        return
+    if ctx.meta.title and ctx.meta.author:
+        return
+    path = Path(str(ctx.meta.path or ctx.videopath))
+    title_dir = path.parent if path.is_file() else path
+    author_dir = title_dir.parent
+    title_name = title_dir.name.strip()
+    match = re.search(r"\((\d{4})\)", title_name)
+    if match:
+        title_name = title_name[: match.start()].strip()
+        if ctx.meta.year is None:
+            ctx.meta.year = int(match.group(1))
+    author_name = author_dir.name.strip()
+    if (
+        not ctx.meta.title
+        and title_name
+        and author_name.casefold() not in _GENERIC_BOOK_DIRS
+    ):
+        ctx.meta.title = title_name
+    if (
+        not ctx.meta.author
+        and author_name
+        and author_name.casefold() not in _GENERIC_BOOK_DIRS
+    ):
+        ctx.meta.author = author_name
+
+
 def _apply_path_identity(ctx: _BookPrepContext) -> tuple[str, str, str, str]:
     fallback_author, fallback_title = book_identity_from_path(
         str(ctx.meta.path or ctx.videopath)
@@ -1959,6 +1993,7 @@ async def gather_book_prep(
     fallback_author, fallback_title, local_title, local_author = (
         _apply_path_identity(ctx)
     )
+    _apply_audiobook_path_identity(ctx)
     _apply_filename_series(ctx)
     await _maybe_fetch_torrent_comments(ctx)
     mam_data, google_data, open_data = await _online_book_metadata(ctx)
