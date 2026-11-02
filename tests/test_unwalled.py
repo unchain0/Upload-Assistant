@@ -1461,3 +1461,12 @@ async def test_unwalled_upload_filename_requires_valid_personal_announce() -> (
         ValueError, match="valid personal Unwalled announce URL"
     ):
         await tracker.get_upload_torrent_filename(Meta(debug=False))
+
+
+def test_unwalled_podcast_without_a_title_blocks_with_a_reason(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    tracker = _tracker()
+    meta = Meta(category="PODCAST", type="AUDIO", name="")
+    assert tracker._podcast_identity_checks(meta) is False
+    assert "podcast torrent title is required" in caplog.text.lower()
