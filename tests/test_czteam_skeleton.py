@@ -70,11 +70,11 @@ def test_czteam_uploads_a_mapped_category() -> None:
     tracker.cookie_validator.load_session_cookies = AsyncMock(  # type: ignore[method-assign]
         return_value=None
     )
-    tracker.get_data = AsyncMock(return_value={"type": 7})  # type: ignore[method-assign]
+    tracker._page_csrf = AsyncMock(return_value="token")  # type: ignore[method-assign]
     tracker.cookie_auth_uploader.handle_upload = AsyncMock(  # type: ignore[method-assign]
         return_value=True
     )
-    assert asyncio.run(tracker.upload(_video_meta())) is True
+    assert asyncio.run(tracker.upload(_video_meta(description="MediaInfo"))) is True
     tracker.cookie_auth_uploader.handle_upload.assert_awaited_once()
 
 
@@ -147,3 +147,38 @@ def test_czteam_requires_the_video_metadata() -> None:
 
 def test_czteam_does_not_require_screenshots() -> None:
     assert _tracker()._video_skip_reason(_video_meta(screens=0)) == ""
+
+
+def test_czteam_builds_the_real_form_payload() -> None:
+    tracker = _tracker()
+    payload = tracker._form_payload(_video_meta(), "csrf")
+    assert payload["csrf_token"] == "csrf"
+    assert payload["type"] == "29"
+    assert payload["resolution"] == "2160p"
+    assert payload["codec"] == "H.265"
+    assert payload["container"] == "MKV"
+    assert payload["source"] == "WEB-DL"
+    assert payload["url"] == "https://www.imdb.com/title/tt1234567/"
+
+
+def test_czteam_blocks_when_a_form_field_is_missing() -> None:
+    tracker = _tracker()
+    payload = tracker._form_payload(_video_meta(video_codec="", source=""), "csrf")
+    reason = tracker._form_skip_reason(payload)
+    assert "codec" in reason and "source" in reason
+
+
+def test_czteam_parses_the_csrf_token() -> None:
+    assert (
+        CZTeam._CSRF_RE.search('<input type="hidden" name="csrf_token" value="abc">').group(1)
+        == "abc"
+    )
+
+
+def test_czteam_does_not_upload_without_csrf() -> None:
+    tracker = _tracker()
+    tracker._page_csrf = AsyncMock(return_value="")  # type: ignore[method-assign]
+    tracker.cookie_auth_uploader.handle_upload = AsyncMock()  # type: ignore[method-assign]
+    meta = _video_meta()
+    assert asyncio.run(tracker.upload(meta)) is False
+    tracker.cookie_auth_uploader.handle_upload.assert_not_awaited()

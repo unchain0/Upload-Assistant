@@ -207,6 +207,64 @@ class CZTeam(NEXUSPHP):
             return "required video metadata is missing: " + ", ".join(missing)
         return ""
 
+    _CSRF_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r'name="csrf_token"\s+value="([^"]+)"', re.IGNORECASE
+    )
+
+    async def _page_csrf(self, meta: Meta) -> str:
+        cookies = await self.cookie_validator.load_session_cookies(
+            meta, self.tracker
+        )
+        if cookies:
+            self.session.cookies.update(cookies)
+        response = await self.session.get(f"{self.base_url}/upload.php")
+        match = self._CSRF_RE.search(response.text)
+        return match.group(1) if match else ""
+
+    def _form_payload(self, meta: Meta, csrf: str) -> dict[str, str]:
+        imdb = (
+            f"https://www.imdb.com/title/tt{meta.imdb_id}/"
+            if meta.imdb_id
+            else str(meta.imdb_tt or "")
+        )
+        genres = meta.genres
+        genre = ", ".join(str(value) for value in genres) if isinstance(genres, list) else str(genres or "")
+        return {
+            "csrf_token": csrf,
+            "name": str(meta.name or ""),
+            "url": imdb,
+            "poster": str(meta.artwork_path or ""),
+            "tube": str(meta.youtube or ""),
+            "descr": str(meta.description or ""),
+            "user_descr": str(meta.description or ""),
+            "genre": genre,
+            "resolution": self._enum_value(meta.resolution, self._RESOLUTIONS),
+            "codec": self._enum_value(meta.video_codec, self._CODECS),
+            "container": self._enum_value(meta.container, self._CONTAINERS),
+            "source": self._enum_value(meta.source, self._SOURCES),
+            "type": str(self.get_category(meta)),
+        }
+
+    @classmethod
+    def _form_skip_reason(cls, payload: dict[str, str]) -> str:
+        missing = [
+            label
+            for label, key in (
+                ("torrent name", "name"),
+                ("IMDb URL", "url"),
+                ("description", "descr"),
+                ("category", "type"),
+                ("resolution", "resolution"),
+                ("codec", "codec"),
+                ("container", "container"),
+                ("source", "source"),
+            )
+            if not payload.get(key)
+        ]
+        if missing:
+            return "the upload form is missing: " + ", ".join(missing)
+        return ""
+
     async def upload(self, meta: Meta) -> bool:
         reason = self._video_skip_reason(meta)
         if reason:
@@ -222,4 +280,20 @@ class CZTeam(NEXUSPHP):
             )
             meta.skipping = self.tracker
             return False
+        csrf = await self._page_csrf(meta)
+        payload = self._form_payload(meta, csrf)
+        reason = self._form_skip_reason(payload)
+        if reason or not csrf:
+            logger.info(
+                f"{self.tracker}: [bold red]"
+                f"{reason or 'no csrf_token was found on the upload page'}. "
+                "Skipping upload.[/bold red]"
+            )
+            meta.skipping = self.tracker
+            return False
+        self._payload = payload
         return await super().upload(meta)
+
+    async def get_data(self, meta: Meta) -> dict[str, Any]:
+        meta = meta
+        return dict(getattr(self, "_payload", {}))
