@@ -16,6 +16,15 @@ from src.uploadscreens import upload_image_task_with_stats as upload_image_task
 
 _DUAL_RELEASE_RE = re.compile(r"(?i)(?:^|[.\s])(?:dual|multi)(?:$|[.\s-])")
 
+_COMPRESSED_RE = re.compile(r"(?i)\.(?:rar|zip|7z|r\d{2,3}|\d{3})$")
+_SIDECAR_SUFFIXES = (".srt", ".ass", ".ssa", ".sub", ".idx", ".vtt", ".sup")
+_VIDEO_SUFFIXES = (".mkv", ".mp4", ".avi", ".m2ts", ".ts")
+_SIDECAR_LANGUAGE_RE = re.compile(
+    r"(?i)(?:[._-](?:pt[-_. ]?br|pb|pt|por|eng|en|es|spa|lat|fre|fra|ger|deu|"
+    r"jpn|jap|ita|rus|chi|zho|kor|dublado|legendado))+$"
+)
+_SCREENSHOTS_MINIMUM = 3
+
 
 class CapybaraBR(UNIT3D):
     """
@@ -319,6 +328,51 @@ class CapybaraBR(UNIT3D):
                 return False
         return True
 
+    def _screenshot_allowed(self, meta: Meta) -> bool:
+        if meta.category not in ("MOVIE", "TV") or meta.screens is None:
+            return True
+        try:
+            count = int(meta.screens)
+        except TypeError, ValueError, OverflowError:
+            return True
+        if count >= _SCREENSHOTS_MINIMUM:
+            return True
+        logger.info(f"{self.tracker}: [bold red]at least {_SCREENSHOTS_MINIMUM} screenshots are required for movies and shows (found {count}). Skipping upload...[/bold red]")
+        return False
+
+    @staticmethod
+    def _payload_skip_reason(meta: Meta) -> str:
+        names = CapybaraBR._content_names(meta.filelist)
+        if any(_COMPRESSED_RE.search(name.replace("\\", "/").rsplit("/", 1)[-1]) for name in names):
+            return "compressed media archives are not allowed for movies or shows; extract the release first"
+        videos = {CapybaraBR._stem(name) for name in names if CapybaraBR._has_suffix(name, _VIDEO_SUFFIXES)}
+        sidecars = CapybaraBR._content_names(meta.subtitle_files)
+        sidecars.extend(name for name in names if CapybaraBR._has_suffix(name, _SIDECAR_SUFFIXES))
+        if not videos:
+            return ""
+        for name in sidecars:
+            stem = CapybaraBR._stem(name)
+            if stem in videos or _SIDECAR_LANGUAGE_RE.sub("", stem) in videos:
+                continue
+            return f"sidecar subtitle '{name}' has no matching video file in the payload"
+        return ""
+
+    @staticmethod
+    def _content_names(value: Any) -> list[str]:
+        if not isinstance(value, (list, tuple, set)):
+            return []
+        return [str(item) for item in value if str(item).strip()]
+
+    @staticmethod
+    def _has_suffix(name: str, suffixes: tuple[str, ...]) -> bool:
+        base = name.replace("\\", "/").rsplit("/", 1)[-1].casefold()
+        return base.endswith(suffixes)
+
+    @staticmethod
+    def _stem(name: str) -> str:
+        base = name.replace("\\", "/").rsplit("/", 1)[-1]
+        return base.rsplit(".", 1)[0].casefold()
+
     async def get_additional_data(self, meta: Meta) -> dict[str, str]:
         return {
             "mod_queue_opt_in": await self.get_flag(meta, "modq"),
@@ -330,6 +384,12 @@ class CapybaraBR(UNIT3D):
             return False
 
         if meta.category in ["MOVIE", "TV"]:
+            if not self._screenshot_allowed(meta):
+                return False
+            reason = self._payload_skip_reason(meta)
+            if reason:
+                logger.info(f"{self.tracker}: [bold red]{reason} Skipping upload...[/bold red]")
+                return False
             upload_type = str(meta.type).lower()
             upload_source = str(meta.source).lower()
 
