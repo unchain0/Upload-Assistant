@@ -153,6 +153,7 @@ def test_czteam_builds_the_real_form_payload() -> None:
     tracker = _tracker()
     payload = tracker._form_payload(_video_meta(), "csrf")
     assert payload["csrf_token"] == "csrf"
+    assert payload["MAX_FILE_SIZE"] == "3145728"
     assert payload["type"] == "29"
     assert payload["resolution"] == "2160p"
     assert payload["codec"] == "H.265"
@@ -182,3 +183,19 @@ def test_czteam_does_not_upload_without_csrf() -> None:
     meta = _video_meta()
     assert asyncio.run(tracker.upload(meta)) is False
     tracker.cookie_auth_uploader.handle_upload.assert_not_awaited()
+
+
+def test_czteam_posts_to_takeupload() -> None:
+    tracker = _tracker(categories={"MOVIE": 29})
+    tracker._page_csrf = AsyncMock(return_value="token")  # type: ignore[method-assign]
+    tracker.cookie_validator.load_session_cookies = AsyncMock(  # type: ignore[method-assign]
+        return_value=None
+    )
+    tracker.cookie_auth_uploader.handle_upload = AsyncMock(  # type: ignore[method-assign]
+        return_value=True
+    )
+    assert asyncio.run(tracker.upload(_video_meta(description="MediaInfo"))) is True
+    assert (
+        tracker.cookie_auth_uploader.handle_upload.call_args.kwargs["upload_url"]
+        == "https://czteam.me/takeupload.php"
+    )
