@@ -479,6 +479,14 @@ async def _prepare_ebook_copy(
     return str(output)
 
 
+_ZENTAG_INFRA_MARKERS = (
+    "ebook-meta",
+    "calibre",
+    "not usable",
+    "no such file",
+    "command not found",
+)
+
 _FILENAME_TRANSLATION = str.maketrans(
     {"/": "-", ":": "-", "?": "", "<": "", ">": "", "|": "-", "*": "", '"': "'"}
 )
@@ -496,7 +504,22 @@ def fallback_ebook_filename(meta: Meta) -> str | None:
     year = "" if meta.year is None else str(meta.year)
     language = str(meta.book_language_iso or "").strip().upper()
     isbn = str(meta.isbn or "").strip()
-    if not (author and title and year and language and isbn):
+    missing = [
+        name
+        for name, value in (
+            ("author", author),
+            ("title", title),
+            ("year", year),
+            ("book_language_iso", language),
+            ("isbn", isbn),
+        )
+        if not value
+    ]
+    if missing:
+        logger.warning(
+            "[yellow]ZENITH: cannot build the fallback ebook filename; missing: "
+            f"{', '.join(missing)}[/yellow]"
+        )
         return None
     series = str(meta.book_series or "").strip()
     index = str(meta.book_series_index or "").strip()
@@ -555,6 +578,13 @@ async def prepare_zenith_ebook(
         )
         return _fallback_ebook_copy(meta, source, base_dir)
     except (RuntimeError, ValueError, json.JSONDecodeError) as error:
+        text = str(error).casefold()
+        if any(marker in text for marker in _ZENTAG_INFRA_MARKERS):
+            logger.warning(
+                "[yellow]ZENITH: zentag dependency is missing; copying the ebook "
+                f"with the wiki filename instead: {error}[/yellow]"
+            )
+            return _fallback_ebook_copy(meta, source, base_dir)
         logger.warning(
             "[yellow]ZENITH: automatic ebook preparation failed; keeping the "
             f"original for other trackers: {error}[/yellow]"
