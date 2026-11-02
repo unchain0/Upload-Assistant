@@ -484,20 +484,27 @@ _GENERIC_PROVIDER_TITLES = frozenset(
 )
 
 
+def _fold_accents(value: str) -> str:
+    text = unicodedata.normalize("NFKD", value)
+    return "".join(char for char in text if not unicodedata.combining(char))
+
+
 def _identity_tokens(value: str) -> set[str]:
     return {
         token
-        for token in re.findall(r"[a-z0-9]+", value.casefold())
+        for token in re.findall(r"[a-z0-9]+", _fold_accents(value).casefold())
         if len(token) > 2 and token not in _IDENTITY_STOPWORDS
     }
 
 
 def _normalized_book_identity(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+    return re.sub(r"[^a-z0-9]+", "", _fold_accents(value).casefold())
 
 
 def _author_identity_tokens(value: str) -> set[str]:
-    return set(re.findall(r"[^\W_]+", value.casefold(), flags=re.UNICODE))
+    return set(
+        re.findall(r"[^\W_]+", _fold_accents(value).casefold(), flags=re.UNICODE)
+    )
 
 
 def _source_title_is_more_descriptive(
