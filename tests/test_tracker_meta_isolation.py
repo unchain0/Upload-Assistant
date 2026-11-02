@@ -66,9 +66,13 @@ async def test_zentag_preparation_is_isolated_from_other_trackers(
     assert peergarden_meta.path == str(original)
     assert peergarden_meta.filelist == [str(original)]
     assert peergarden_meta.keep_folder is False
-    assert zenith_meta.path == str(prepared)
+    if suffix == "pdf":
+        assert zenith_meta.path == str(prepared_file)
+        assert zenith_meta.keep_folder is False
+    else:
+        assert zenith_meta.path == str(prepared)
+        assert zenith_meta.keep_folder is True
     assert zenith_meta.filelist == [str(prepared_file)]
-    assert zenith_meta.keep_folder is True
     assert zenith_meta.uuid == "release-id-zenith"
     assert zenith_meta.get("zentag_prepared") is True
     assert zenith_meta.tracker_status is shared_status
