@@ -180,6 +180,48 @@ class CapybaraBR(UNIT3D):
             )
         }
 
+    @staticmethod
+    def _normalized_book_title(meta: Meta) -> str:
+        title = str(meta.title or "").strip()
+        author = str(meta.author or "").strip()
+        if not author:
+            return title
+        while True:
+            stripped = CapybaraBR._strip_author_segment(title, author)
+            if stripped == title:
+                return title
+            title = stripped
+
+    @staticmethod
+    def _strip_author_segment(title: str, author: str) -> str:
+        parts = re.split(r"\s[-\u2013]\s", title)
+        if len(parts) > 1:
+            if CapybaraBR._same_author(parts[0], author):
+                return " - ".join(parts[1:]).strip()
+            if CapybaraBR._looks_like_author(parts[-1], author):
+                return " - ".join(parts[:-1]).strip()
+        for separator in (" - ", " \u2013 ", ": "):
+            prefix = f"{author}{separator}"
+            if title.casefold().startswith(prefix.casefold()):
+                return title[len(prefix):].strip()
+        return title
+
+    @staticmethod
+    def _normalized_author(value: str) -> str:
+        return re.sub(r"[.\s]+", " ", value.casefold()).strip(" ,")
+
+    @staticmethod
+    def _same_author(candidate: str, author: str) -> bool:
+        return CapybaraBR._normalized_author(candidate) == CapybaraBR._normalized_author(author)
+
+    @staticmethod
+    def _looks_like_author(candidate: str, author: str) -> bool:
+        fragment = CapybaraBR._normalized_author(candidate)
+        full = CapybaraBR._normalized_author(author)
+        if not fragment or not full:
+            return False
+        return fragment == full or full.startswith(f"{fragment} ")
+
     async def get_name(self, meta: Meta) -> dict[str, str]:
         if meta.manual_name is not None:
             return {"name": meta.manual_name.strip()}
@@ -190,7 +232,7 @@ class CapybaraBR(UNIT3D):
 
         if category == "BOOK":
             book_title = f"{meta.book_series.strip()}: " if meta.book_series else ""
-            book_title += meta.title.strip()
+            book_title += CapybaraBR._normalized_book_title(meta)
             series_index = meta.book_series_index.strip()
             book_title += f" Vol. {series_index}" if series_index else ""
             book_title = self.common.portuguese_title_capitalization(book_title)
