@@ -72,7 +72,7 @@ def test_czteam_uploads_a_mapped_category() -> None:
     tracker.cookie_auth_uploader.handle_upload = AsyncMock(  # type: ignore[method-assign]
         return_value=True
     )
-    assert asyncio.run(tracker.upload(_meta())) is True
+    assert asyncio.run(tracker.upload(_video_meta())) is True
     tracker.cookie_auth_uploader.handle_upload.assert_awaited_once()
 
 
@@ -97,3 +97,48 @@ def test_czteam_validates_the_literal_enums() -> None:
     assert CZTeam._enum_value("h.265", CZTeam._CODECS) == "H.265"
     assert CZTeam._enum_value("mkv", CZTeam._CONTAINERS) == "MKV"
     assert CZTeam._enum_value("web-dl", CZTeam._SOURCES) == "WEB-DL"
+
+
+def _video_meta(**values: object) -> Meta:
+    defaults: dict[str, object] = {
+        "category": "MOVIE",
+        "type": "WEBDL",
+        "name": "Resident.Evil.2026.2160p.iTunes.WEB-DL.DDP5.1.H.265-CHDWEB",
+        "imdb_id": 1234567,
+        "mediainfo": {"media": {"track": []}},
+        "video_codec": "H.265",
+        "source": "WEB-DL",
+        "resolution": "2160p",
+        "container": "MKV",
+    }
+    defaults.update(values)
+    return Meta(**defaults)
+
+
+def test_czteam_accepts_a_scene_named_video_with_full_metadata() -> None:
+    assert _tracker()._video_skip_reason(_video_meta(screens=0)) == ""
+
+
+def test_czteam_rejects_a_title_outside_the_scene_pattern() -> None:
+    reason = _tracker()._video_skip_reason(
+        _video_meta(name="Resident Evil 2026 2160p WEB-DL")
+    )
+    assert "scene naming" in reason
+
+
+def test_czteam_rejects_nuked_releases() -> None:
+    reason = _tracker()._video_skip_reason(
+        _video_meta(name="Resident.Evil.2026.1080p.NUKED-GROUP")
+    )
+    assert "nuked" in reason
+
+
+def test_czteam_requires_the_video_metadata() -> None:
+    reason = _tracker()._video_skip_reason(
+        _video_meta(imdb_id=None, video_codec="", source="")
+    )
+    assert "IMDb id" in reason and "video codec" in reason and "source" in reason
+
+
+def test_czteam_does_not_require_screenshots() -> None:
+    assert _tracker()._video_skip_reason(_video_meta(screens=0)) == ""
