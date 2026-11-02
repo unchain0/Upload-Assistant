@@ -114,7 +114,9 @@ def _required_zenith_preparation_failed(
 def _zenith_isolated_meta(meta: Meta, prepared_path: str) -> Meta:
     prepared_meta = meta.copy()
     prepared_meta.path = prepared_path
-    prepared_meta.keep_folder = True
+    # Books are uploaded as a single-file torrent; the site wraps it in a
+    # folder. Audiobooks keep their folder.
+    prepared_meta.keep_folder = bool(prepared_meta.audiobook)
     prepared_meta.allow_spaces = True
     prepared_meta.uuid = f"{prepared_meta.uuid}-zenith"
     prepared_meta.update({"trusted_book_layout": True})
