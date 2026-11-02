@@ -25,12 +25,12 @@ class AudnexusManager:
         ]
         return ", ".join(name for name in names if name)
 
-    async def narrator_by_asin(
+    async def metadata_by_asin(
         self, asin: str, client: httpx.AsyncClient | None = None
-    ) -> str:
+    ) -> dict[str, Any]:
         identifier = str(asin or "").strip()
         if not identifier:
-            return ""
+            return {}
         owns_client = client is None
         http = client or httpx.AsyncClient(timeout=10.0)
         try:
@@ -41,11 +41,28 @@ class AudnexusManager:
             logger.warning(
                 f"[yellow]Audnexus lookup failed for {identifier}: {error}[/yellow]"
             )
-            return ""
+            return {}
         finally:
             if owns_client:
                 await http.aclose()
         if response.status_code != 200:
-            return ""
+            return {}
         payload = response.json()
-        return self._narrators(payload) if isinstance(payload, dict) else ""
+        if not isinstance(payload, dict):
+            return {}
+        year = ""
+        release_date = str(payload.get("releaseDate") or "")
+        if release_date[:4].isdigit():
+            year = release_date[:4]
+        return {
+            "narrator": self._narrators(payload),
+            "language": str(payload.get("language") or "").strip(),
+            "publisher": str(payload.get("publisherName") or "").strip(),
+            "year": year,
+        }
+
+    async def narrator_by_asin(
+        self, asin: str, client: httpx.AsyncClient | None = None
+    ) -> str:
+        metadata = await self.metadata_by_asin(asin, client=client)
+        return str(metadata.get("narrator") or "")

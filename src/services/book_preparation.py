@@ -2003,13 +2003,22 @@ async def _apply_audnexus_narrator(meta: Meta) -> None:
             )
             return
         meta.asin = asin
-    narrator = await AudnexusManager().narrator_by_asin(str(meta.asin))
-    if narrator:
+    metadata = await AudnexusManager().metadata_by_asin(str(meta.asin))
+    narrator = str(metadata.get("narrator") or "")
+    if narrator and not meta.narrator:
         meta.narrator = narrator
-    else:
+    elif not narrator:
         logger.info(
             f"ASIN {meta.asin} found but Audnexus returned no narrator"
         )
+    if not meta.book_language_iso:
+        _name, code = resolve_book_language(str(metadata.get("language") or ""))
+        if code:
+            meta.book_language_iso = code
+    if not meta.publisher:
+        meta.publisher = str(metadata.get("publisher") or "")
+    if meta.year is None and str(metadata.get("year") or "").isdigit():
+        meta.year = int(str(metadata["year"]))
 
 
 async def gather_book_prep(
