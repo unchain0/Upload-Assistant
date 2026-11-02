@@ -110,3 +110,18 @@ def test_fallback_directories_are_unique(tmp_path: Path) -> None:
     assert first is not None and second is not None
     assert first != second
     assert "(1)" not in Path(first).name and "(1)" not in Path(second).name
+
+
+def test_fallback_filename_moves_the_trailing_article() -> None:
+    assert fallback_ebook_filename(
+        _meta(title="Origins of the Federal Reserve, The")
+    ).startswith("J.K. Rowling - Harry Potter #4 - The Origins of the Federal Reserve")
+    assert fallback_ebook_filename(
+        _meta(title="Tale, A")
+    ).startswith("J.K. Rowling - Harry Potter #4 - A Tale")
+    assert fallback_ebook_filename(
+        _meta(title="Apple, An")
+    ).startswith("J.K. Rowling - Harry Potter #4 - An Apple")
+    assert fallback_ebook_filename(_meta(title="Plain Title")).startswith(
+        "J.K. Rowling - Harry Potter #4 - Plain Title"
+    )

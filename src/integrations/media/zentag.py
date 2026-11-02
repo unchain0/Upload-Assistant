@@ -530,6 +530,13 @@ _FILENAME_TRANSLATION = str.maketrans(
 )
 
 
+def _natural_title(value: str) -> str:
+    match = re.match(r"^(?P<body>.+),\s*(?P<article>The|A|An)$", value, re.IGNORECASE)
+    if match:
+        return f"{match.group('article').capitalize()} {match.group('body').strip()}"
+    return value
+
+
 def fallback_ebook_filename(meta: Meta) -> str | None:
     """Build the wiki filename when zentag/ebook-meta cannot run.
 
@@ -538,7 +545,7 @@ def fallback_ebook_filename(meta: Meta) -> str | None:
     keeps rejecting the upload instead of inventing a name.
     """
     author = str(meta.author or "").strip()
-    title = str(meta.title or "").strip()
+    title = _natural_title(str(meta.title or "").strip())
     year = "" if meta.year is None else str(meta.year)
     language = str(meta.book_language_iso or "").strip().upper()
     isbn = str(meta.isbn or "").strip()
