@@ -55,9 +55,11 @@ def test_fallback_copies_the_ebook_without_touching_the_original(
     meta = _meta(base_dir=str(tmp_path), uuid="abc")
     target = _fallback_ebook_copy(meta, source, str(tmp_path))
     assert target is not None
-    assert Path(target).name == (
+    release_dir = Path(target)
+    assert release_dir.is_dir()
+    expected = release_dir / (
         "J.K. Rowling - Harry Potter #4 - Harry Potter and the Goblet of Fire "
         "(2000) [ENG 9781781100103].epub"
     )
-    assert Path(target).read_bytes() == b"book"
+    assert expected.read_bytes() == b"book"
     assert source.read_bytes() == b"book"
