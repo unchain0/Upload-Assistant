@@ -152,6 +152,10 @@ async def prepare_tracker_meta(
     )
     if tracker != "ZENITH":
         return tracker_meta
+    logger.info(
+        "ZENITH prepare_tracker_meta invoked "
+        f"(unattended={tracker_meta.unattended}, path={tracker_meta.path!r})"
+    )
 
     preparation_required = _zenith_preparation_required(tracker_meta, config)
     prepared_book = await _zenith_prepared_path(tracker_meta, config)
@@ -1237,6 +1241,11 @@ async def _process_single_tracker(
     ctx: _TrackerUploadContext, tracker: str
 ) -> None:
     normalized = _normalized_tracker_name(tracker)
+    if normalized == "ZENITH":
+        logger.info(
+            "ZENITH single-tracker processing started; enabled trackers: "
+            f"{sorted(ctx.enabled_trackers)}"
+        )
     meta = await _prepared_single_tracker_meta(ctx, normalized)
     tracker_class = _tracker_adapter(ctx, normalized)
     await _apply_zenith_upload_guard(meta, normalized, tracker_class)
