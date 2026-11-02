@@ -186,9 +186,10 @@ class CZTeam(NEXUSPHP):
             if not self._SCENE_NAME_RE.search(name) or not any(
                 token in name for token in self._RESOLUTION_TOKENS
             ):
-                return (
-                    "the release title must follow the scene naming "
-                    "Title.Year[.Episode].Resolution.Source.Codec.Audio-GROUP"
+                logger.warning(
+                    f"{self.tracker}: [yellow]the release title does not look like the "
+                    "scene naming used by the site; continuing because no official "
+                    "naming rule exists.[/yellow]"
                 )
         missing = [
             label
