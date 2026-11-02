@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
@@ -478,6 +479,65 @@ async def _prepare_ebook_copy(
     return str(output)
 
 
+_FILENAME_TRANSLATION = str.maketrans(
+    {"/": "-", ":": "-", "?": "", "<": "", ">": "", "|": "-", "*": "", '"': "'"}
+)
+
+
+def fallback_ebook_filename(meta: Meta) -> str | None:
+    """Build the wiki filename when zentag/ebook-meta cannot run.
+
+    Only the data already present in the prepared metadata is used; the
+    function returns None when a required field is missing, so the tracker
+    keeps rejecting the upload instead of inventing a name.
+    """
+    author = str(meta.author or "").strip()
+    title = str(meta.title or "").strip()
+    year = "" if meta.year is None else str(meta.year)
+    language = str(meta.book_language_iso or "").strip().upper()
+    isbn = str(meta.isbn or "").strip()
+    if not (author and title and year and language and isbn):
+        return None
+    series = str(meta.book_series or "").strip()
+    index = str(meta.book_series_index or "").strip()
+    series_part = f"{series} #{index}" if series and index else series
+    edition = str(meta.manual_edition or meta.edition or "").strip()
+    details = [language]
+    if edition:
+        details.append(edition)
+    details.append(isbn)
+    source = str(meta.manual_source or meta.source or "").strip().upper()
+    if source == "RETAIL":
+        details.append("Retail")
+    parts = [author]
+    if series_part:
+        parts.extend(["-", series_part])
+    parts.extend(["-", title])
+    name = f"{' '.join(parts)} ({year}) [{' '.join(details)}]"
+    extension = Path(str(meta.path or title)).suffix
+    return f"{name.translate(_FILENAME_TRANSLATION)}{extension}"
+
+
+def _fallback_ebook_copy(meta: Meta, source: Path, base_dir: str) -> str | None:
+    filename = fallback_ebook_filename(meta)
+    if not filename:
+        return None
+    try:
+        target_dir = Path(base_dir) / "tmp" / str(meta.uuid) / "zenith-ebook-fallback"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / filename
+        shutil.copy2(source, target)
+    except OSError as error:
+        logger.warning(
+            f"[yellow]ZENITH: could not copy the ebook with the fallback name: {error}[/yellow]"
+        )
+        return None
+    logger.info(
+        f"[green]ZENITH: copied the ebook with the wiki filename: {target}[/green]"
+    )
+    return str(target)
+
+
 async def prepare_zenith_ebook(
     meta: Meta, base_dir: str, config: dict[str, Any]
 ) -> str | None:
@@ -488,13 +548,13 @@ async def prepare_zenith_ebook(
         return None
     try:
         return await _prepare_ebook_copy(meta, source, base_dir, config)
-    except (
-        TimeoutError,
-        OSError,
-        RuntimeError,
-        ValueError,
-        json.JSONDecodeError,
-    ) as error:
+    except (TimeoutError, OSError) as error:
+        logger.warning(
+            "[yellow]ZENITH: zentag is unavailable; copying the ebook with the "
+            f"wiki filename instead: {error}[/yellow]"
+        )
+        return _fallback_ebook_copy(meta, source, base_dir)
+    except (RuntimeError, ValueError, json.JSONDecodeError) as error:
         logger.warning(
             "[yellow]ZENITH: automatic ebook preparation failed; keeping the "
             f"original for other trackers: {error}[/yellow]"
