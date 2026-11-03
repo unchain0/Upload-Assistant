@@ -97,13 +97,25 @@ def _zenith_preparation_required(meta: Meta, config: dict[str, Any]) -> bool:
     return audiobook_required or ebook_required
 
 
+_ZENITH_PREPARED: dict[tuple[str, str], str] = {}
+
+
 async def _zenith_prepared_path(
     meta: Meta, config: dict[str, Any]
 ) -> str | None:
+    key = (str(meta.base_dir), str(meta.uuid))
+    cached = _ZENITH_PREPARED.get(key)
+    if cached is not None:
+        logger.info(
+            "ZENITH: reusing the zentag copy prepared earlier in this run"
+        )
+        return cached
     prepared = await prepare_zenith_audiobook(meta, str(meta.base_dir), config)
+    if prepared is None:
+        prepared = await prepare_zenith_ebook(meta, str(meta.base_dir), config)
     if prepared is not None:
-        return prepared
-    return await prepare_zenith_ebook(meta, str(meta.base_dir), config)
+        _ZENITH_PREPARED[key] = prepared
+    return prepared
 
 
 def _required_zenith_preparation_failed(
