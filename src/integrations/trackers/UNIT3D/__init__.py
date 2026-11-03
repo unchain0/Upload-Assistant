@@ -808,6 +808,10 @@ class UNIT3D:
             files[key] = image_file
 
     async def get_upload_torrent_filename(self, meta: Meta) -> str:
+        if meta.category == "BOOK" and meta.zentag_prepared:
+            return await self.common.ensure_prepared_book_torrent(
+                meta, self.tracker_config
+            )
         return await self.common.get_torrent_filename(
             meta, self.tracker_config
         )
