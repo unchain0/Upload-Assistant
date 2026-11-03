@@ -195,3 +195,21 @@ def test_mismatch_after_retry_blocks_the_upload(
         assert "does not match the final files" in str(error)
     else:
         raise AssertionError("expected the upload to be blocked")
+
+
+def test_folder_torrent_files_resolve_inside_the_release_dir(
+    tmp_path: Path,
+) -> None:
+    release = tmp_path / "release"
+    release.mkdir()
+    payload = release / "book.m4b"
+    payload.write_bytes(b"x")
+    shape = _Shape(
+        {
+            "name": "release",
+            "piece length": 16384,
+            "files": [{"path": ["book.m4b"]}],
+        }
+    )
+    meta = Meta(category="BOOK", path=str(release))
+    assert Common._torrent_files(shape, meta) == [payload]
