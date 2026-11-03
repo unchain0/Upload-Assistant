@@ -778,6 +778,64 @@ class Common:
                 entries.append((str(path.relative_to(root)), stat.st_size, stat.st_mtime_ns))
         return tuple(entries)
 
+    @staticmethod
+    def _torrent_files(torrent: Any, meta: Meta) -> list[Path]:
+        info = torrent.metainfo.get("info", {})
+        root = Path(str(meta.path))
+        entries = info.get("files")
+        if not isinstance(entries, list):
+            return [root]
+        base = root.parent if root.is_dir() else root
+        files: list[Path] = []
+        for entry in entries:
+            parts = entry.get("path") if isinstance(entry, dict) else None
+            if isinstance(parts, list) and parts:
+                files.append(base.joinpath(*[str(part) for part in parts]))
+        return files
+
+    async def _verify_pieces(self, torrent: Any, meta: Meta) -> str | None:
+        info = torrent.metainfo.get("info", {})
+        pieces = info.get("pieces")
+        length = info.get("piece length")
+        if not isinstance(pieces, bytes) or not isinstance(length, int) or length <= 0:
+            return "torrent has no piece hashes"
+        files = self._torrent_files(torrent, meta)
+        digests = [pieces[index : index + 20] for index in range(0, len(pieces), 20)]
+        return await asyncio.to_thread(self._hash_pieces, files, length, digests)
+
+    @staticmethod
+    def _hash_pieces(
+        files: list[Path], piece_length: int, digests: list[bytes]
+    ) -> str | None:
+        index = 0
+        buffer = b""
+        for file_path in files:
+            if not file_path.is_file():
+                return f"missing file {file_path.name}"
+            with file_path.open("rb") as handle:
+                while True:
+                    chunk = handle.read(piece_length - len(buffer))
+                    if not chunk:
+                        break
+                    buffer += chunk
+                    if len(buffer) < piece_length:
+                        continue
+                    if index >= len(digests):
+                        return "torrent has fewer piece hashes than the file"
+                    if hashlib.sha1(buffer).digest() != digests[index]:  # noqa: S324 - BitTorrent pieces are SHA1
+                        return f"piece {index} differs"
+                    index += 1
+                    buffer = b""
+        if buffer:
+            if index >= len(digests):
+                return "torrent has fewer piece hashes than the file"
+            if hashlib.sha1(buffer).digest() != digests[index]:  # noqa: S324 - BitTorrent pieces are SHA1
+                return f"piece {index} differs"
+            index += 1
+        if index != len(digests):
+            return "torrent has more piece hashes than the file"
+        return None
+
     async def create_torrent_for_upload(
         self,
         meta: Meta,

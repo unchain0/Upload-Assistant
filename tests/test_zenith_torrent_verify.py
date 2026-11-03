@@ -105,3 +105,19 @@ def test_single_file_torrent_is_verified_from_the_file(tmp_path: Path) -> None:
     meta = Meta(category="BOOK", path=str(book))
     root = Common._verify_root(_Shape({"length": 1}), meta)
     assert root == book
+
+
+def test_piece_hashes_are_checked_against_the_final_file(tmp_path: Path) -> None:
+    from torf import Torrent
+
+    payload = tmp_path / "book.m4b"
+    payload.write_bytes(b"a" * 40000)
+    torrent = Torrent(path=str(payload), piece_size=16384)
+    torrent.generate()
+    pieces = torrent.metainfo["info"]["pieces"]
+    digests = [pieces[i : i + 20] for i in range(0, len(pieces), 20)]
+    assert Common._hash_pieces([payload], 16384, digests) is None
+    data = bytearray(payload.read_bytes())
+    data[-1] ^= 0xFF
+    payload.write_bytes(bytes(data))
+    assert Common._hash_pieces([payload], 16384, digests) == "piece 2 differs"
