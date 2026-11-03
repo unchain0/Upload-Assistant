@@ -785,7 +785,9 @@ class Common:
         entries = info.get("files")
         if not isinstance(entries, list):
             return [root]
-        base = root.parent if root.is_dir() else root
+        base = root
+        if root.is_dir() and info.get("name") != root.name:
+            base = root.parent
         files: list[Path] = []
         for entry in entries:
             parts = entry.get("path") if isinstance(entry, dict) else None
