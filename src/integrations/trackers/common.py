@@ -772,8 +772,29 @@ class Common:
             f"{torrent_filename}.torrent"
         )
         if not await self.path_exists(path):
-            return
+            from pathlib import Path as _Path
+
+            from src.integrations.torrent.torrent_creator import TorrentCreator
+
+            await TorrentCreator.create_torrent(
+                meta, _Path(str(meta.path)), torrent_filename
+            )
+            if not await self.path_exists(path):
+                logger.warning(
+                    f"could not create {torrent_filename}.torrent "
+                    f"for {meta.uuid}"
+                )
+                return
         torrent = await self._load_upload_torrent(path)
+        if meta.category == "BOOK" and meta.zentag_prepared:
+            try:
+                await asyncio.to_thread(torrent.verify, str(meta.path))
+            except Exception as error:
+                logger.error(
+                    "torrent does not match the prepared file: "
+                    f"{error}. Skipping upload."
+                )
+                return
         metainfo = self._sanitize_torrent_metainfo(torrent)
         if is_public:
             self._apply_public_torrent_policy(metainfo, public_trackers)
