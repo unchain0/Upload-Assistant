@@ -84,3 +84,24 @@ def test_torrent_mismatch_blocks_the_upload(
         common.create_torrent_for_upload(meta, "ZENITH", "[ZENITH]")
     )
     common._write_upload_torrent.assert_not_awaited()
+
+
+class _Shape:
+    def __init__(self, info: dict) -> None:
+        self.metainfo = {"info": info}
+
+
+def test_folder_torrent_is_verified_from_its_parent(tmp_path: Path) -> None:
+    release = tmp_path / "release"
+    release.mkdir()
+    meta = Meta(category="BOOK", path=str(release))
+    root = Common._verify_root(_Shape({"files": [{"path": ["x.m4b"]}]}), meta)
+    assert root == tmp_path
+
+
+def test_single_file_torrent_is_verified_from_the_file(tmp_path: Path) -> None:
+    book = tmp_path / "book.epub"
+    book.write_bytes(b"x")
+    meta = Meta(category="BOOK", path=str(book))
+    root = Common._verify_root(_Shape({"length": 1}), meta)
+    assert root == book

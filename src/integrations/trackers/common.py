@@ -746,6 +746,38 @@ class Common:
             lambda: Torrent.copy(torrent).write(out_path, overwrite=True),
         )
 
+    @staticmethod
+    def _verify_root(torrent: Any, meta: Meta) -> Path:
+        target = Path(str(meta.path))
+        info = torrent.metainfo.get("info", {})
+        if "files" in info and target.is_dir():
+            # torf.verify() expects the directory that CONTAINS the torrent
+            # root folder, not the root folder itself.
+            return target.parent
+        return target
+
+    async def _verify_upload_torrent(self, torrent: Any, meta: Meta) -> None:
+        root = self._verify_root(torrent, meta)
+        before = self._tree_signature(root)
+        await asyncio.to_thread(torrent.verify, str(root))
+        after = self._tree_signature(root)
+        if before != after:
+            raise RuntimeError(
+                "prepared files changed while the torrent was being verified"
+            )
+
+    @staticmethod
+    def _tree_signature(root: Path) -> tuple[tuple[str, int, int], ...]:
+        if root.is_file():
+            stat = root.stat()
+            return ((root.name, stat.st_size, stat.st_mtime_ns),)
+        entries = []
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                stat = path.stat()
+                entries.append((str(path.relative_to(root)), stat.st_size, stat.st_mtime_ns))
+        return tuple(entries)
+
     async def create_torrent_for_upload(
         self,
         meta: Meta,
