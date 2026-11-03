@@ -374,3 +374,35 @@ def test_radarr_alternate_titles_and_release_group_guards() -> None:
         {"alternateTitles": [{"title": "Alt"}, "bad"]}
     ) == ["Alt"]
     assert manager._release_group("bad") is None
+
+
+def test_radarr_exact_file_with_a_different_year_is_rejected() -> None:
+    manager = RadarrManager({"DEFAULT": {}})
+    filename = "Birthday.1993.1080p.BluRay.REMUX.AVC.FLAC.2.0-TheWhiteDoll.mkv"
+    payload = _movie_payload(
+        title="Bob's Birthday",
+        year=1994,
+        secondaryYear=None,
+        movieFile={
+            "originalFilePath": f"/media/{filename}",
+            "releaseGroup": "TheWhiteDoll",
+        },
+    )
+    assert asyncio.run(manager.extract_movie_data(payload, filename)) is None
+
+
+def test_radarr_exact_file_with_the_same_year_is_accepted() -> None:
+    manager = RadarrManager({"DEFAULT": {}})
+    filename = "Birthday.1993.1080p.BluRay.REMUX.AVC.FLAC.2.0-TheWhiteDoll.mkv"
+    payload = _movie_payload(
+        title="Birthday",
+        year=1993,
+        secondaryYear=None,
+        movieFile={
+            "originalFilePath": f"/media/{filename}",
+            "releaseGroup": "TheWhiteDoll",
+        },
+    )
+    parsed = asyncio.run(manager.extract_movie_data(payload, filename))
+    assert parsed is not None
+    assert parsed["tmdb_id"] == 123

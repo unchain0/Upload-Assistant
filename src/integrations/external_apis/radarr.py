@@ -163,20 +163,32 @@ class RadarrManager:
         if not filename:
             return items[0]
         exact = cls._exact_movie(items, filename)
-        return (
-            exact
-            if exact is not None
-            else cls._best_scored_movie(items, filename)
-        )
+        if exact is not None:
+            return exact
+        return cls._best_scored_movie(items, filename)
 
     @classmethod
     def _exact_movie(
         cls, items: list[Mapping[str, Any]], filename: str
     ) -> Mapping[str, Any] | None:
         return next(
-            (item for item in items if cls._exact_file_match(item, filename)),
+            (
+                item
+                for item in items
+                if cls._exact_file_match(item, filename)
+                and cls._year_matches_filename(item, filename)
+            ),
             None,
         )
+
+    @classmethod
+    def _year_matches_filename(
+        cls, movie: Mapping[str, Any], filename: str
+    ) -> bool:
+        _title, source_year = cls._filename_identity(filename)
+        if source_year is None:
+            return True
+        return source_year in cls._candidate_years(movie)
 
     @classmethod
     def _best_scored_movie(
