@@ -836,6 +836,31 @@ class Common:
             return "torrent has more piece hashes than the file"
         return None
 
+    async def ensure_prepared_book_torrent(
+        self, meta: Meta, tracker_config: Any
+    ) -> str:
+        base = Path(str(meta.base_dir)) / "tmp" / str(meta.uuid) / "BASE.torrent"
+        base.parent.mkdir(parents=True, exist_ok=True)
+        base.unlink(missing_ok=True)
+        from src.integrations.torrent.torrent_creator import TorrentCreator
+
+        for attempt in range(2):
+            await TorrentCreator.create_torrent(
+                meta, Path(str(meta.path)), "BASE"
+            )
+            torrent = await self._load_upload_torrent(str(base))
+            mismatch = await self._verify_pieces(torrent, meta)
+            if mismatch is None:
+                return await self.get_torrent_filename(meta, tracker_config)
+            logger.warning(
+                "prepared book torrent does not match the files "
+                f"({mismatch}, attempt {attempt + 1})"
+            )
+            await asyncio.sleep(1)
+        raise RuntimeError(
+            "prepared book torrent does not match the final files"
+        )
+
     async def create_torrent_for_upload(
         self,
         meta: Meta,

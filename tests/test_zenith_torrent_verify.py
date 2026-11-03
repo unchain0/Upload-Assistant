@@ -121,3 +121,77 @@ def test_piece_hashes_are_checked_against_the_final_file(tmp_path: Path) -> None
     data[-1] ^= 0xFF
     payload.write_bytes(bytes(data))
     assert Common._hash_pieces([payload], 16384, digests) == "piece 2 differs"
+
+
+def test_stale_base_is_replaced_before_the_upload(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    from src.integrations.torrent import torrent_creator
+
+    meta = Meta(
+        category="BOOK",
+        audiobook=True,
+        zentag_prepared=True,
+        uuid="abc",
+        base_dir=str(tmp_path),
+        path=str(tmp_path / "book.m4b"),
+    )
+    base = tmp_path / "tmp" / "abc" / "BASE.torrent"
+    base.parent.mkdir(parents=True)
+    base.write_bytes(b"stale")
+    calls = []
+
+    async def fake_create(_meta, _path, name, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        calls.append(name)
+        base.write_bytes(b"new")
+        return base
+
+    monkeypatch.setattr(
+        torrent_creator.TorrentCreator, "create_torrent", staticmethod(fake_create)
+    )
+    common = _common(tmp_path)
+    common._load_upload_torrent = AsyncMock(return_value=object())  # type: ignore[method-assign]
+    common._verify_pieces = AsyncMock(return_value=None)  # type: ignore[method-assign]
+    filename = asyncio.run(common.ensure_prepared_book_torrent(meta, {}))
+    assert filename == "BASE"
+    assert base.read_bytes() == b"new"
+    assert calls == ["BASE"]
+
+
+def test_mismatch_after_retry_blocks_the_upload(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    from src.integrations.torrent import torrent_creator
+
+    meta = Meta(
+        category="BOOK",
+        audiobook=True,
+        zentag_prepared=True,
+        uuid="abc",
+        base_dir=str(tmp_path),
+        path=str(tmp_path / "book.m4b"),
+    )
+    base = tmp_path / "tmp" / "abc" / "BASE.torrent"
+    base.parent.mkdir(parents=True)
+    base.write_bytes(b"x")
+
+    async def fake_create(*_args, **_kwargs):  # type: ignore[no-untyped-def]
+        base.write_bytes(b"x")
+        return base
+
+    monkeypatch.setattr(
+        torrent_creator.TorrentCreator, "create_torrent", staticmethod(fake_create)
+    )
+    monkeypatch.setattr(
+        "src.integrations.trackers.common.asyncio.sleep",
+        AsyncMock(return_value=None),
+    )
+    common = _common(tmp_path)
+    common._load_upload_torrent = AsyncMock(return_value=object())  # type: ignore[method-assign]
+    common._verify_pieces = AsyncMock(return_value="piece 1913 differs")  # type: ignore[method-assign]
+    try:
+        asyncio.run(common.ensure_prepared_book_torrent(meta, {}))
+    except RuntimeError as error:
+        assert "does not match the final files" in str(error)
+    else:
+        raise AssertionError("expected the upload to be blocked")
