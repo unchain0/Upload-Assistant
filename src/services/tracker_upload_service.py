@@ -147,6 +147,9 @@ def _zenith_isolated_meta(meta: Meta, prepared_path: str) -> Meta:
                 prepared_meta.isdir = False
                 prepared_meta.keep_folder = False
     prepared_meta.allow_spaces = True
+    # The early artifact can hash a copy while zentag is still finishing;
+    # let the upload stage build the torrent from the final file.
+    prepared_meta.nohash = True
     prepared_meta.uuid = f"{prepared_meta.uuid}-zenith"
     prepared_meta.update({"trusted_book_layout": True})
     return prepared_meta
