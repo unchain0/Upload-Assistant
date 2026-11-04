@@ -1185,3 +1185,38 @@ def test_final_cookie_validator_read_branches(
             str(tmp_path / "missing.json"),
             "TEST",
         )
+
+
+def test_permission_denied_upload_error_is_reported_directly(
+    tmp_path: Path,
+) -> None:
+    uploader, _common_double, meta = _uploader(tmp_path)
+    meta.uuid = "permission-denied"
+    meta.tracker_status["IMMORTALSEED"] = {}
+    response = Response(
+        status=200,
+        text="<html><body><div>Sorry, permission denied!</div></body></html>",
+    )
+    assert not asyncio.run(
+        uploader.handle_failed_upload(
+            meta,
+            "IMMORTALSEED",
+            "",
+            "",
+            "",
+            response,  # type: ignore[arg-type]
+            ["Download Torrent (SSL)", "Thank you for uploading"],
+        )
+    )
+    message = meta.tracker_status["IMMORTALSEED"]["status_message"]
+    assert "Tracker rejected the upload: Sorry, permission denied!" in message
+    assert "may have uploaded" not in message
+
+
+def test_extract_upload_error_recognizes_disabled_upload_rights() -> None:
+    assert (
+        cookie_auth.extract_upload_error(
+            "<html><div>Your Upload Rights Are Disabled</div></html>"
+        )
+        == "Your Upload Rights Are Disabled"
+    )

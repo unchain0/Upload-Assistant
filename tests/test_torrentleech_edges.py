@@ -132,7 +132,22 @@ async def test_torrentleech_validate_cookie_session_success_failure_and_request_
         "_login_probe",
         AsyncMock(
             return_value=_response(
-                status=200, url="https://www.torrentleech.org/login"
+                status=200,
+                text='<a href="/logout">Logout</a>',
+                url="https://www.torrentleech.org/",
+            )
+        ),
+    )
+    assert await tracker._validate_cookie_session(False)
+
+    monkeypatch.setattr(
+        tracker,
+        "_login_probe",
+        AsyncMock(
+            return_value=_response(
+                status=200,
+                text="<form>Login Form</form>",
+                url="https://www.torrentleech.org/login",
             )
         ),
     )
