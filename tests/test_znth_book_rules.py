@@ -71,16 +71,55 @@ def test_zenith_book_identifier_data_sends_isbn_and_asin() -> None:
 
 def test_zenith_accepts_the_official_ebook_filename_examples() -> None:
     tracker = _tracker()
-    for name in (
-        "J.K. Rowling - Harry Potter #4 - Harry Potter and the Goblet of Fire (2000) [ENG UK 9781781100103 Retail].epub",
-        "Lisa Jewell - None of This is True (2023) [ENG 9781804940228 Retail].epub",
-        "Brian Herbert - codelude to Dune #1 - House Atreides (1999) [ENG 0553897829].epub",
-        "Janet Valade - PHP, MySQL, JavaScript & Html5 All-In-One for Dummies (2013) [ENG 3rd 9781118213704].epub",
-    ):
+    examples = (
+        (
+            "J.K. Rowling",
+            "Harry Potter and the Goblet of Fire",
+            "Harry Potter",
+            "4",
+            2000,
+            "9781781100103",
+            "J.K. Rowling - Harry Potter #4 - Harry Potter and the Goblet of Fire (2000) [ENG UK 9781781100103 Retail].epub",
+        ),
+        (
+            "Lisa Jewell",
+            "None of This is True",
+            "",
+            "",
+            2023,
+            "9781804940228",
+            "Lisa Jewell - None of This is True (2023) [ENG 9781804940228 Retail].epub",
+        ),
+        (
+            "Brian Herbert",
+            "House Atreides",
+            "codelude to Dune",
+            "1",
+            1999,
+            "0553897829",
+            "Brian Herbert - codelude to Dune #1 - House Atreides (1999) [ENG 0553897829].epub",
+        ),
+        (
+            "Janet Valade",
+            "PHP, MySQL, JavaScript & Html5 All-In-One for Dummies",
+            "",
+            "",
+            2013,
+            "9781118213704",
+            "Janet Valade - PHP, MySQL, JavaScript & Html5 All-In-One for Dummies (2013) [ENG 3rd 9781118213704].epub",
+        ),
+    )
+    for author, title, series, index, year, isbn, name in examples:
         meta = Meta(
             category="BOOK",
             type="EPUB",
-            isbn="9781781100103",
+            author=author,
+            title=title,
+            book_series=series,
+            book_series_index=index,
+            year=year,
+            isbn=isbn,
+            book_language_iso="eng",
             filelist=[name],
         )
         assert tracker._ebook_format_policy(meta) is True
@@ -93,7 +132,11 @@ def test_zenith_rejects_an_ebook_filename_outside_the_pattern(
     meta = Meta(
         category="BOOK",
         type="EPUB",
+        author="Author",
+        title="Title",
+        year=2025,
         isbn="9781541706194",
+        book_language_iso="eng",
         filelist=["Author - Title (2025).epub"],
     )
     assert tracker._ebook_format_policy(meta) is False
@@ -107,7 +150,11 @@ def test_zenith_rejects_forbidden_characters_in_the_ebook_filename(
     meta = Meta(
         category="BOOK",
         type="EPUB",
+        author="Author",
+        title="Title: Subtitle",
+        year=2025,
         isbn="9781541706194",
+        book_language_iso="eng",
         filelist=[
             "Author - Title: Subtitle (2025) [ENG 9781541706194].epub"
         ],

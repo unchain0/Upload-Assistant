@@ -15,7 +15,6 @@ from src.domain_models.book_naming import (
 )
 from src.domain_models.release import Meta
 from src.domain_models.release_identity import ReleaseYearIdentity
-from src.integrations.media.zentag import _without_book_subtitle
 from src.integrations.observability.runtime_support import logger
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.UNIT3D import UNIT3D, ParamsList
@@ -1294,7 +1293,7 @@ class Zenith(UNIT3D):
                 return False
         if meta.audiobook:
             return await self._audiobook_policy(meta, filelist, defer)
-        return self._ebook_format_policy(meta)
+        return self._ebook_format_policy(meta, defer)
 
     async def _audiobook_policy(
         self, meta: Meta, filelist: list[Any], defer: bool
@@ -1354,20 +1353,47 @@ class Zenith(UNIT3D):
             return False
         return True
 
-    def _ebook_format_policy(self, meta: Meta) -> bool:
+    def _ebook_format_policy(self, meta: Meta, defer: bool = False) -> bool:
+        from src.integrations.media import zenith_ebook
+
         if _book_format(meta) not in {"EPUB", "PDF", "MOBI", "AZW3", "DJVU"}:
             logger.info(
                 f"{self.tracker}: [bold red]Ebooks must be EPUB, PDF, MOBI, AZW3, or DJVU. Skipping upload...[/bold red]"
             )
             return False
-        return self._ebook_filename_policy(meta)
+        if not zenith_ebook.canonical_author(meta):
+            logger.info(
+                f"{self.tracker}: [bold red]The ebook needs a canonical author. Skipping upload...[/bold red]"
+            )
+            return False
+        if not zenith_ebook.year(meta):
+            logger.info(
+                f"{self.tracker}: [bold red]The ebook needs a single edition year. Skipping upload...[/bold red]"
+            )
+            return False
+        if not zenith_ebook.language(meta):
+            logger.info(
+                f"{self.tracker}: [bold red]The ebook needs a three-letter language. Skipping upload...[/bold red]"
+            )
+            return False
+        if not str(meta.isbn or "").strip():
+            logger.info(
+                f"{self.tracker}: [bold red]ISBN is required in the Zenith ebook filename. Skipping upload...[/bold red]"
+            )
+            return False
+        return self._ebook_filename_policy(meta, defer)
 
-    def _ebook_filename_policy(self, meta: Meta) -> bool:
-        if meta.audiobook or _is_misc(meta):
+    def _ebook_filename_policy(self, meta: Meta, defer: bool = False) -> bool:
+        from src.integrations.media import zenith_ebook
+
+        if meta.audiobook or _is_misc(meta) or defer:
             return True
         stems = self._ebook_file_stems(meta)
         if not stems:
-            return True
+            logger.info(
+                f"{self.tracker}: [bold red]The prepared ebook file name is missing; zentag output was not found.[/bold red]"
+            )
+            return False
         for stem in stems:
             if _FORBIDDEN_FILENAME_CHARS.search(stem):
                 logger.info(
@@ -1377,27 +1403,15 @@ class Zenith(UNIT3D):
                     f"Filename: {stem}[/bold red]"
                 )
                 return False
-            if not self._ebook_filename_matches(stem):
+            error = zenith_ebook.validate_filename(stem, meta)
+            if error:
                 logger.info(
                     f"{self.tracker}: [bold red]The ebook filename does not follow "
-                    "'Author - Series # - Title (Year) [Language Edition ISBN Retail].Format'. "
-                    f"Filename: {stem}[/bold red]"
+                    "'Author - Series # - Title (Year) [Language Edition ISBN Retail].Format': "
+                    f"{error}. Filename: {stem}[/bold red]"
                 )
                 return False
         return True
-
-    @staticmethod
-    def _ebook_filename_matches(stem: str) -> bool:
-        if " - " not in stem or not re.search(r"\(\d{4}\)", stem):
-            return False
-        bracket = re.search(r"\[([^\]]+)\]\s*$", stem)
-        if not bracket:
-            return False
-        content = bracket.group(1)
-        return bool(
-            _FILENAME_ISBN_RE.search(content)
-            and _FILENAME_LANGUAGE_RE.search(content)
-        )
 
     @staticmethod
     def _ebook_file_stems(meta: Meta) -> list[str]:
@@ -1834,11 +1848,14 @@ class Zenith(UNIT3D):
     def _ebook_release_name(
         cls, meta: Meta, identity: tuple[str, str, str, str, str]
     ) -> str:
-        author, title, year, format_value, tag = identity
-        title = _without_book_subtitle(title)
-        language = _iso_639_2_code(meta.book_language_iso)
-        series = cls._ebook_series(meta)
-        edition = cls._ebook_edition(meta)
+        from src.integrations.media import zenith_ebook
+
+        author, _title, _year, format_value, tag = identity
+        title = zenith_ebook.title(meta)
+        year = zenith_ebook.year(meta)
+        language = zenith_ebook.language(meta)
+        series = zenith_ebook.series(meta)
+        edition = zenith_ebook.edition(meta)
         parts = cls._ebook_identity_parts(author, series, title)
         parts.extend(
             cls._nonempty_parts(
