@@ -75,7 +75,20 @@ def _underscore_delimited_author(author: str) -> bool:
     return "_" in author and " " not in author
 
 
+def _inverted_surname_author(author: str) -> str:
+    """Turn 'Sobrenome, Nome' into 'Nome Sobrenome', particles included."""
+    if author.count(",") != 1:
+        return author
+    last, first = (part.strip() for part in author.split(",", 1))
+    if not last or not first or "," in first:
+        return author
+    if re.search(r"\b(?:and|with|y)\b", first, flags=re.IGNORECASE):
+        return author
+    return f"{first} {last}"
+
+
 def _first_author_part(author: str) -> str:
+    author = _inverted_surname_author(author)
     split_pattern = (
         r"\s*(?:,|;|&|/|\+|\band\b|\be\b|\by\b|\bwith\b|\s+-\s+)\s*"
     )
