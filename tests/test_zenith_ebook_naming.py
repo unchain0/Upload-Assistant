@@ -370,3 +370,48 @@ def test_zenith_isolated_meta_uses_the_file_as_the_torrent_root(tmp_path) -> Non
         assert isolated.keep_folder is False
         assert len(isolated.filelist) == 1
         assert "/" not in Path(isolated.filelist[0]).name
+
+
+@pytest.mark.parametrize(
+    ("author", "expected"),
+    [
+        ("François Chollet Francois Chollet", "François Chollet"),
+        (
+            "François Chollet Francois Chollet Chollet, François",
+            "François Chollet",
+        ),
+        ("Chollet, François François Chollet", "François Chollet"),
+        ("Sebastian Raschka, Vahid Mirjalili", "Sebastian Raschka, Vahid Mirjalili"),
+    ],
+)
+def test_repeated_author_without_a_separator_is_collapsed(
+    author: str, expected: str
+) -> None:
+    from src.domain_models.book_naming import canonical_book_author
+
+    assert canonical_book_author(Meta(author=author)) == expected
+
+
+@pytest.mark.parametrize("phrase", ["Second Edition", "2nd Ed", "Scholar", "Definitive"])
+def test_edition_phrase_leaves_the_title_and_stays_only_in_the_bracket(
+    phrase: str,
+) -> None:
+    meta = _meta(
+        "François Chollet",
+        f"Deep Learning with Python, {phrase}",
+        2021,
+        "9781617296864",
+        "pdf",
+        manual_edition="2nd" if "Edition" in phrase or "Ed" in phrase else phrase,
+    )
+    name = fallback_ebook_filename(meta)
+    assert name == (
+        "François Chollet - Deep Learning with Python "
+        f"(2021) [ENG {'2nd' if 'Edition' in phrase or 'Ed' in phrase else phrase} "
+        "9781617296864].pdf"
+    )
+    token = "2nd" if "Edition" in phrase or "Ed" in phrase else phrase
+    release = TRACKER._book_release_name(meta)
+    assert release.endswith(f"2021 ENG {token} PDF")
+    assert release.count(token) == 1
+    assert phrase not in release.split(" 2021 ")[0]
