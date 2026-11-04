@@ -1735,7 +1735,11 @@ class Zenith(UNIT3D):
 
     @staticmethod
     def _book_author(meta: Meta) -> str:
-        return _primary_name(str(meta.author or ""))
+        # The release name uses the same author as the metadata, commas included.
+        value = str(meta.book_author or meta.author or "").strip()
+        if "," in value:
+            return value
+        return _primary_name(value)
 
     @staticmethod
     def _book_title(meta: Meta) -> str:
