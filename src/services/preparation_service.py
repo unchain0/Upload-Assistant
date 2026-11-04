@@ -429,7 +429,7 @@ class Prep:
     def _skip_early_screenshots(meta: Meta) -> bool:
         if meta.keep_images or meta.screens <= 0:
             return True
-        return meta.category in {"MUSIC", "PODCAST", "GAME", "BOOK"}
+        return meta.category in {"MUSIC", "PODCAST", "GAME"}
 
     def _multi_screens_count(self) -> int:
         default_config = self.config.get("DEFAULT", {})
@@ -576,6 +576,12 @@ class Prep:
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            from src.integrations.media.screenshot_capture import (
+                BookScreenshotsMissingError,
+            )
+
+            if isinstance(error, BookScreenshotsMissingError):
+                raise
             logger.warning(
                 f"[yellow]Early screenshot generation failed; upload stage will retry: {error}[/yellow]"
             )

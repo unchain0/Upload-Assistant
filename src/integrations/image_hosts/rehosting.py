@@ -34,7 +34,10 @@ from src.integrations.filesystem.temp_paths import (
 from src.integrations.image_hosts.uploader import UploadScreensManager
 from src.integrations.mapping.value_coercion import to_int
 from src.integrations.media.artwork import is_valid_cover_image
-from src.integrations.media.screenshot_capture import TakeScreensManager
+from src.integrations.media.screenshot_capture import (
+    BookScreenshotsMissingError,
+    TakeScreensManager,
+)
 from src.integrations.observability.runtime_support import logger
 
 _ADDITIONAL_IMAGE_COLLECTIONS: tuple[ImageCollection, ...] = (
@@ -1437,6 +1440,8 @@ async def _generate_missing_screens(
             meta, takescreens_manager, path, filename, needed
         )
         _extend_unique(screens, await _generated_screens(meta))
+    except BookScreenshotsMissingError:
+        raise
     except Exception as error:
         logger.error(f"[red]Error during screenshot capture: {error}")
         import traceback

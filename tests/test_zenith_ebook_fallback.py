@@ -125,3 +125,23 @@ def test_fallback_filename_moves_the_trailing_article() -> None:
     assert fallback_ebook_filename(_meta(title="Plain Title")).startswith(
         "J.K. Rowling - Harry Potter #4 - Plain Title"
     )
+
+
+def test_fallback_filename_drops_a_long_subtitle() -> None:
+    name = fallback_ebook_filename(
+        _meta(
+            author="René Descartes",
+            title=(
+                "Meditations on First Philosophy: With Selections from the "
+                "Objections and Replies"
+            ),
+            year=2008,
+            book_series="",
+            book_series_index="",
+            isbn="9780192806963",
+        )
+    )
+    assert name == (
+        "René Descartes - Meditations on First Philosophy (2008) "
+        "[ENG 9780192806963].epub"
+    )

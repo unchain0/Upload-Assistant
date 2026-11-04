@@ -3362,6 +3362,35 @@ def _selected_book_pages(total: int, requested: int) -> list[int]:
     return sorted(random.sample(range(total), count))
 
 
+_ISBN_PAGE = re.compile(r"\bisbn\b|copyright", re.IGNORECASE)
+
+
+def _priority_document_pages(
+    total: int, page_texts: list[str], requested: int
+) -> list[int]:
+    """Cover, the ISBN/copyright page, then content. Zenith requires all three."""
+    if total <= 0:
+        return []
+    wanted = min(total, max(3, requested))
+    pages: list[int] = []
+
+    def add(page: int) -> None:
+        if 0 <= page < total and page not in pages:
+            pages.append(page)
+
+    add(0)
+    for index, text in enumerate(page_texts[:total]):
+        if _ISBN_PAGE.search(text or ""):
+            add(index)
+            break
+    add(min(total - 1, max(2, total // 2)))
+    for page in range(total):
+        if len(pages) >= wanted:
+            break
+        add(page)
+    return pages
+
+
 def _book_destination(
     output_dir: Path, poster_dir: Path, out_name: str
 ) -> Path:
@@ -3694,6 +3723,11 @@ async def _generate_document_screenshots(
                 f"[yellow]{extension.upper()} does not have pages[/yellow]"
             )
             return []
+        page_texts = []
+        for index in range(min(total_pages, 25)):
+            page = document[index]
+            reader = getattr(page, "get_text", None)
+            page_texts.append(str(reader("text") or "") if reader else "")
         screenshots = [
             await _render_document_page(
                 document,
@@ -3704,7 +3738,7 @@ async def _generate_document_screenshots(
                 poster_dir,
             )
             for position, page_number in enumerate(
-                _selected_book_pages(total_pages, num_screens)
+                _priority_document_pages(total_pages, page_texts, num_screens)
             )
         ]
         await _ensure_document_artwork(
@@ -3933,16 +3967,16 @@ async def _book_screenshot_result(
     if meta.audiobook:
         await prepare_book_cover(path, folder_id, base_dir, meta)
         return []
-    requested = num_screens if num_screens > 0 else meta.screens
+    requested = num_screens if num_screens > 0 else int(meta.screens or 0)
+    requested = max(requested, 3)
     images = await generate_ebook_screenshots(
         path, filename, folder_id, base_dir, meta, requested
     )
-    if not images:
-        # The trackers reject a book description without a picture, so stop
-        # here instead of publishing an upload that will be deferred.
+    if len(images) < 3:
         raise BookScreenshotsMissingError(
-            "BOOK upload needs at least one page screenshot in the description; "
-            f"none could be rendered from {Path(path).suffix.lstrip('.') or 'the file'}"
+            "BOOK upload needs at least 3 page screenshots (cover, "
+            "ISBN/copyright page, and a content page); "
+            f"got {len(images)} from {Path(path).suffix.lstrip('.') or 'the file'}"
         )
     return images
 

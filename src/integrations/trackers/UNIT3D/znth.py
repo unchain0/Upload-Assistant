@@ -10,6 +10,7 @@ from src.domain_models.book_language import (
 from src.domain_models.book_language import resolve_book_language
 from src.domain_models.release import Meta
 from src.domain_models.release_identity import ReleaseYearIdentity
+from src.integrations.media.zentag import _without_book_subtitle
 from src.integrations.observability.runtime_support import logger
 from src.integrations.trackers.common import Common
 from src.integrations.trackers.UNIT3D import UNIT3D, ParamsList
@@ -1824,6 +1825,7 @@ class Zenith(UNIT3D):
         cls, meta: Meta, identity: tuple[str, str, str, str, str]
     ) -> str:
         author, title, year, format_value, tag = identity
+        title = _without_book_subtitle(title)
         language = _iso_639_2_code(meta.book_language_iso)
         series = cls._ebook_series(meta)
         edition = cls._ebook_edition(meta)
