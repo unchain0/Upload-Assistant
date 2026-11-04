@@ -60,6 +60,10 @@ class TrackerImageRequirementError(UploadAssistantError):
     """A tracker cannot be used because its required images are unavailable."""
 
 
+class BookDescriptionMissingError(UploadAssistantError):
+    """A book would reach a tracker with no description text."""
+
+
 class OperationAbortedError(UploadAssistantError):
     """The user or an explicit policy cancelled the current operation."""
 
