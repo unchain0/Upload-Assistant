@@ -415,3 +415,70 @@ def test_edition_phrase_leaves_the_title_and_stays_only_in_the_bracket(
     assert release.endswith(f"2021 ENG {token} PDF")
     assert release.count(token) == 1
     assert phrase not in release.split(" 2021 ")[0]
+
+
+def test_validator_compares_the_cleaned_title_with_a_colon_subtitle() -> None:
+    meta = _meta(
+        "Charles Petzold",
+        "Code: The Hidden Language of Computer Hardware and Software",
+        1999,
+        "9780137909261",
+        "epub",
+    )
+    name = fallback_ebook_filename(meta)
+    assert name is not None
+    assert name.startswith("Charles Petzold - Code")
+    meta.filelist = [f"/books/{name}"]
+    meta.basename_no_ext = name.rsplit(".", 1)[0]
+    assert TRACKER._ebook_filename_policy(meta) is True
+
+
+@pytest.mark.parametrize("apostrophe", ["'", "\u2019"])
+def test_validator_accepts_straight_and_typographic_apostrophes(
+    apostrophe: str,
+) -> None:
+    meta = _meta(
+        "Steve Krug",
+        f"Don{apostrophe}t Make Me Think, Revisited",
+        2014,
+        "9780133597462",
+        "epub",
+    )
+    name = fallback_ebook_filename(meta)
+    assert name is not None
+    assert "Don" in name and "Make Me Think" in name
+    meta.filelist = [f"/books/{name}"]
+    meta.basename_no_ext = name.rsplit(".", 1)[0]
+    assert TRACKER._ebook_filename_policy(meta) is True
+
+
+def test_lookup_author_separates_two_concatenated_names() -> None:
+    meta = _meta(
+        "Éva Tardos Jon Kleinberg",
+        "Algorithm Design",
+        2006,
+        "0321295358",
+        "epub",
+        lookup_author="Jon Kleinberg, Éva Tardos",
+    )
+    assert fallback_ebook_filename(meta) == (
+        "Jon Kleinberg, Éva Tardos - Algorithm Design "
+        "(2006) [ENG 0321295358].epub"
+    )
+    assert TRACKER._book_release_name(meta).startswith(
+        "Jon Kleinberg, Éva Tardos - Algorithm Design"
+    )
+
+
+def test_lookup_author_keeps_three_names() -> None:
+    meta = _meta(
+        "A One B Two C Three",
+        "Book",
+        2020,
+        "9780000000002",
+        "epub",
+        lookup_author="A One, B Two, C Three",
+    )
+    assert fallback_ebook_filename(meta) == (
+        "A One, B Two, C Three - Book (2020) [ENG 9780000000002].epub"
+    )
