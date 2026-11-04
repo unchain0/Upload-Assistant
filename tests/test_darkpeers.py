@@ -112,6 +112,7 @@ def test_darkpeers_only_includes_audio_spectrograms_for_music():
             category=category,
             audio_spectrogram=True,
             spectrograms_images=[spectrogram],
+            overview="Description.",
         )
         description = asyncio.run(adapter.get_description(meta))["description"]
         assert "Audio Spectrogram" not in description
@@ -483,6 +484,7 @@ def test_darkpeers_validated_audiobook_isbn_is_rendered_in_description():
         audiobook_duration_formatted="16h 29m 25s",
         audiobook_bitrate=64,
         isbn="978-0-06-145298-7",
+        overview="A demon and a witch search for a stolen artifact.",
     )
     adapter = DarkPeers(
         {"DEFAULT": {"tmdb_api": "test-key"}, "TRACKERS": {"DARKPEERS": {}}}
@@ -741,6 +743,7 @@ def test_darkpeers_book_description_includes_required_technical_fields():
         book_series="Series",
         book_series_index="2",
         page_count=320,
+        overview="A technical book description.",
     )
     description = asyncio.run(
         DarkPeers(

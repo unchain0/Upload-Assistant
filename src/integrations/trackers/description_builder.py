@@ -19,6 +19,7 @@ import langcodes
 from jinja2 import Template
 from langcodes.tag_parser import LanguageTagError
 
+from src.domain_models.errors import BookDescriptionMissingError
 from src.domain_models.release import Meta
 from src.domain_models.tracker_image_policy import get_tracker_image_collection
 from src.integrations.filesystem.screenshot_manifest import (
@@ -77,6 +78,28 @@ def html_to_bbcode(text: str) -> str:
 
     # Strip any residual HTML tags
     return re.sub(r"<[^>]+>", "", converted_text)
+
+
+def require_book_description(meta: Meta) -> None:
+    """A book description needs text, not only screenshots or a signature."""
+    if str(meta.category or "").upper() != "BOOK":
+        return
+    if meta.comic or meta.manga or meta.magazine:
+        return
+    sources = (
+        meta.overview,
+        meta.description,
+        meta.description_template,
+        meta.description_file,
+        meta.description_link,
+    )
+    if any(str(value or "").strip() for value in sources):
+        return
+    name = str(meta.title or meta.name or meta.path or "BOOK")
+    raise BookDescriptionMissingError(
+        f"{name}: no description or overview was found; the tracker rejects "
+        "blank book uploads. Add overview metadata or a description source."
+    )
 
 
 def _clean_description_text(text: str) -> str:
@@ -2434,6 +2457,7 @@ class DescriptionBuilder:
         signature: str = "",
         desc_header: str = "",
     ) -> str:
+        require_book_description(meta)
         images, multi_screens = self._description_image_state(meta)
         approved_hosts = approved_image_hosts or []
         parts: list[str] = []
