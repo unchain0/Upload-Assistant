@@ -8,11 +8,6 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
-from src.domain_models.book_naming import (
-    canonical_book_author,
-    clean_book_name,
-    clean_book_title,
-)
 from src.domain_models.release import Meta
 from src.integrations.observability.runtime_support import logger
 from src.integrations.runtime_tools.zentag_binary import ZentagBinaryManager
@@ -373,16 +368,16 @@ def _audiobook_command(
 
 
 def _ebook_override_values(meta: Meta) -> dict[str, object]:
+    from src.integrations.media import zenith_ebook
+
     return {
-        "--author": _preferred_text(meta.author, meta.book_author),
-        "--title": _without_book_subtitle(
-            _preferred_text(meta.title, meta.book_title)
-        ),
-        "--year": meta.year,
+        "--author": zenith_ebook.canonical_author(meta),
+        "--title": zenith_ebook.title(meta),
+        "--year": zenith_ebook.year(meta),
         "--isbn": _preferred_text(meta.isbn, meta.book_isbn),
         "--series": meta.book_series,
         "--series-part": _series_part(meta),
-        "--edition": meta.edition,
+        "--edition": zenith_ebook.edition(meta),
         "--publisher": _preferred_text(meta.publisher, meta.book_publisher),
         "--language": _preferred_text(
             meta.book_language_iso, meta.book_language
@@ -591,54 +586,17 @@ def _natural_title(value: str) -> str:
 
 
 def fallback_ebook_filename(meta: Meta) -> str | None:
-    """Build the wiki filename when zentag/ebook-meta cannot run.
+    """Build the wiki filename when zentag/ebook-meta cannot run."""
+    from src.integrations.media import zenith_ebook
 
-    Only the data already present in the prepared metadata is used; the
-    function returns None when a required field is missing, so the tracker
-    keeps rejecting the upload instead of inventing a name.
-    """
-    author = canonical_book_author(meta)
-    title = _without_book_subtitle(
-        _natural_title(clean_book_title(meta.title or "", author))
-    )
-    year = "" if meta.year is None else str(meta.year)
-    language = str(meta.book_language_iso or "").strip().upper()
-    isbn = str(meta.isbn or "").strip()
-    missing = [
-        name
-        for name, value in (
-            ("author", author),
-            ("title", title),
-            ("year", year),
-            ("book_language_iso", language),
-            ("isbn", isbn),
-        )
-        if not value
-    ]
-    if missing:
+    filename = zenith_ebook.filename(meta)
+    if filename is None:
+        missing = zenith_ebook.missing_fields(meta)
         logger.warning(
             "[yellow]ZENITH: cannot build the fallback ebook filename; missing: "
             f"{', '.join(missing)}[/yellow]"
         )
-        return None
-    series = str(meta.book_series or "").strip()
-    index = str(meta.book_series_index or "").strip()
-    series_part = f"{series} #{index}" if series and index else series
-    edition = str(meta.manual_edition or meta.edition or "").strip()
-    details = [language]
-    if edition:
-        details.append(edition)
-    details.append(isbn)
-    source = str(meta.manual_source or meta.source or "").strip().upper()
-    if source == "RETAIL":
-        details.append("Retail")
-    parts = [author]
-    if series_part:
-        parts.extend(["-", series_part])
-    parts.extend(["-", title])
-    name = f"{' '.join(parts)} ({year}) [{' '.join(details)}]"
-    extension = Path(str(meta.path or title)).suffix
-    return f"{clean_book_name(name).translate(_FILENAME_TRANSLATION)}{extension}"
+    return filename
 
 
 def _fallback_ebook_copy(meta: Meta, source: Path, base_dir: str) -> str | None:
