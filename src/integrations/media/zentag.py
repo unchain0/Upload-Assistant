@@ -8,6 +8,11 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, cast
 
+from src.domain_models.book_naming import (
+    canonical_book_author,
+    clean_book_name,
+    clean_book_title,
+)
 from src.domain_models.release import Meta
 from src.integrations.observability.runtime_support import logger
 from src.integrations.runtime_tools.zentag_binary import ZentagBinaryManager
@@ -592,8 +597,10 @@ def fallback_ebook_filename(meta: Meta) -> str | None:
     function returns None when a required field is missing, so the tracker
     keeps rejecting the upload instead of inventing a name.
     """
-    author = str(meta.author or "").strip()
-    title = _without_book_subtitle(_natural_title(str(meta.title or "").strip()))
+    author = canonical_book_author(meta)
+    title = _without_book_subtitle(
+        _natural_title(clean_book_title(meta.title or "", author))
+    )
     year = "" if meta.year is None else str(meta.year)
     language = str(meta.book_language_iso or "").strip().upper()
     isbn = str(meta.isbn or "").strip()
@@ -631,7 +638,7 @@ def fallback_ebook_filename(meta: Meta) -> str | None:
     parts.extend(["-", title])
     name = f"{' '.join(parts)} ({year}) [{' '.join(details)}]"
     extension = Path(str(meta.path or title)).suffix
-    return f"{name.translate(_FILENAME_TRANSLATION)}{extension}"
+    return f"{clean_book_name(name).translate(_FILENAME_TRANSLATION)}{extension}"
 
 
 def _fallback_ebook_copy(meta: Meta, source: Path, base_dir: str) -> str | None:
