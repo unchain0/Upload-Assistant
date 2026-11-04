@@ -634,7 +634,7 @@ def _named_ebook_copy(meta: Meta, source: Path, base_dir: str) -> str | None:
     logger.info(
         f"[green]ZENITH: named the ebook with the wiki filename: {target / filename}[/green]"
     )
-    return str(target)
+    return str(target / filename)
 
 
 fallback_ebook_copy = _named_ebook_copy

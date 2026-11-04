@@ -55,9 +55,9 @@ def test_fallback_copies_the_ebook_without_touching_the_original(
     meta = _meta(base_dir=str(tmp_path), uuid="abc")
     target = _fallback_ebook_copy(meta, source, str(tmp_path))
     assert target is not None
-    release_dir = Path(target)
-    assert release_dir.is_dir()
-    expected = release_dir / (
+    expected = Path(target)
+    assert expected.is_file()
+    assert expected.name == (
         "J.K. Rowling - Harry Potter #4 - Harry Potter and the Goblet of Fire "
         "(2000) [ENG 9781781100103].epub"
     )
@@ -91,12 +91,12 @@ def test_ebook_meta_failure_uses_the_fallback(monkeypatch, tmp_path: Path) -> No
         zentag.prepare_zenith_ebook(meta, str(tmp_path), {})
     )
     assert target is not None
-    release_dir = Path(target)
-    assert release_dir.name == (
+    release_file = Path(target)
+    assert release_file.name == (
         "J.K. Rowling - Harry Potter #4 - Harry Potter and the Goblet of Fire "
-        "(2000) [ENG 9781781100103]"
+        "(2000) [ENG 9781781100103].epub"
     )
-    assert (release_dir / f"{release_dir.name}.epub").is_file()
+    assert release_file.is_file()
 
 
 def test_fallback_directories_are_unique(tmp_path: Path) -> None:
@@ -108,7 +108,7 @@ def test_fallback_directories_are_unique(tmp_path: Path) -> None:
     first = _fallback_ebook_copy(meta, source, str(tmp_path))
     second = _fallback_ebook_copy(meta, source, str(tmp_path))
     assert first is not None and second is not None
-    assert first != second
+    assert Path(first).parent != Path(second).parent
     assert "(1)" not in Path(first).name and "(1)" not in Path(second).name
 
 

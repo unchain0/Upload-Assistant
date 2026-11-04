@@ -242,7 +242,7 @@ def test_google_books_and_openlibrary_supply_the_edition() -> None:
 
     google: dict[str, object] = {}
     GoogleBooksManager._add_edition(google, {"edition": "Definitive Edition"})
-    assert google["edition"] == "Definitive Edition"
+    assert google["edition"] == "Definitive"
 
     details = {
         "title": "The Road to Serfdom",
@@ -281,12 +281,12 @@ async def test_prepare_names_the_single_ebook_even_when_zentag_fails(
     monkeypatch.setattr(zentag, "_prepare_ebook_copy", failing)
     target = await zentag.prepare_zenith_ebook(meta, str(tmp_path), {})
     assert target is not None
-    release_dir = Path(target)
-    assert release_dir.name == (
+    release_file = Path(target)
+    assert release_file.name == (
         "F. A. Hayek - The Road to Serfdom (2007) "
-        "[ENG Definitive 9780226320540 Retail]"
+        "[ENG Definitive 9780226320540 Retail].epub"
     )
-    assert (release_dir / f"{release_dir.name}.epub").is_file()
+    assert release_file.is_file()
     assert TRACKER._book_release_name(meta) == (
         "F. A. Hayek - The Road to Serfdom 2007 ENG Definitive EPUB Retail"
     )
@@ -324,5 +324,49 @@ async def test_prepare_renames_a_zentag_output_with_the_original_name(
     assert target is not None
     assert Path(target).name == (
         "F. A. Hayek - The Road to Serfdom (2007) "
-        "[ENG Definitive 9780226320540]"
+        "[ENG Definitive 9780226320540].epub"
     )
+
+
+def test_lookup_title_supplies_the_edition_without_an_edition_field() -> None:
+    from src.integrations.external_apis.google_books import GoogleBooksManager
+    from src.integrations.external_apis.openlibrary import OpenLibraryManager
+
+    google: dict[str, object] = {}
+    GoogleBooksManager._add_edition(
+        google,
+        {
+            "title": "The Road to Serfdom",
+            "subtitle": "Text and Documents--The Definitive Edition",
+        },
+    )
+    assert google["edition"] == "Definitive"
+
+    details = {
+        "title": "The Road to Serfdom",
+        "subtitle": "Text and Documents--The Definitive Edition",
+        "publishers": ["Routledge"],
+    }
+    metadata = OpenLibraryManager()._metadata_from_book_details(
+        {}, details, "9780226320540"
+    )
+    assert metadata["edition"] == "Definitive"
+
+
+def test_zenith_isolated_meta_uses_the_file_as_the_torrent_root(tmp_path) -> None:
+    from src.services.tracker_upload_service import _zenith_isolated_meta
+
+    prepared = tmp_path / "prepared"
+    prepared.mkdir()
+    book = prepared / "Book (2020) [ENG 9780000000002].epub"
+    book.write_bytes(b"book")
+    meta = _meta("Author", "Book", 2020, "9780000000002", "epub")
+
+    for prepared_path in (str(prepared), str(book)):
+        isolated = _zenith_isolated_meta(meta, prepared_path)
+        assert isolated.path == str(book)
+        assert isolated.filelist == [str(book)]
+        assert isolated.isdir is False
+        assert isolated.keep_folder is False
+        assert len(isolated.filelist) == 1
+        assert "/" not in Path(isolated.filelist[0]).name
