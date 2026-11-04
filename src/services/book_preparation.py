@@ -1958,6 +1958,9 @@ def _finalize_book_prep_sanitization(meta: Meta) -> None:
     detect_newspaper(meta)
     sanitize_book_language(meta)
     sanitize_book_author(meta)
+    # Later lookups replace meta.author. The CLI value has to win last.
+    if meta.book_author:
+        meta.author = str(meta.book_author).strip()
 
 
 async def _safe_openlibrary_metadata(

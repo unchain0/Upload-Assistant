@@ -170,3 +170,28 @@ def test_description_after_colon_is_removed_and_series_titles_stay() -> None:
         _without_book_subtitle("Algorithms: Part II (Fahad Batla's Library)")
         == "Algorithms: Part II"
     )
+
+
+def test_several_authors_keep_order_and_a_separator() -> None:
+    import json
+
+    from src.domain_models.release import Meta
+    from src.integrations.external_apis.myanonamouse import MyAnonamouseManager
+    from src.services.book_preparation import _finalize_book_prep_sanitization
+
+    parsed = MyAnonamouseManager()._parse_torrent_info(
+        {
+            "title": "Python Machine Learning",
+            "author_info": json.dumps(
+                {"2": "Vahid Mirjalili", "1": "Sebastian Raschka"}
+            ),
+        }
+    )
+    assert parsed["author"] == "Sebastian Raschka, Vahid Mirjalili"
+
+    meta = Meta(
+        author="Vahid Mirjalili Sebastian Raschka",
+        book_author="Sebastian Raschka, Vahid Mirjalili",
+    )
+    _finalize_book_prep_sanitization(meta)
+    assert meta.author == "Sebastian Raschka, Vahid Mirjalili"
