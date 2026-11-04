@@ -103,10 +103,12 @@ class TorrentLeech:
     def _login_probe_success(response: httpx.Response, force: bool) -> bool:
         expected_status = 301 if force else 200
         expected_path = "torrents/browse" if force else "torrents/upload"
-        return (
-            response.status_code == expected_status
-            and expected_path in str(response.url)
-        )
+        if response.status_code != expected_status:
+            return False
+        if expected_path in str(response.url):
+            return True
+        text = response.text.casefold()
+        return not force and "logout" in text and "login form" not in text
 
     async def generate_description(self, meta: Meta) -> str:
         builder = DescriptionBuilder(self.tracker, self.config)

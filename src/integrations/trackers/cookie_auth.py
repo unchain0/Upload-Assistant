@@ -90,6 +90,14 @@ def _blocked_upload_notice(soup: BeautifulSoup) -> str:
             r"proib|permitid|not allowed|forbidden", message, re.IGNORECASE
         ):
             return message
+    for element in soup.select("h1, h2, h3, p, div, td, span, b"):
+        message = _clean_upload_error_text(element.get_text(" ", strip=True))
+        if len(message) < 500 and re.search(
+            r"permission denied|upload rights are disabled",
+            message,
+            re.IGNORECASE,
+        ):
+            return message
     return ""
 
 
@@ -1325,8 +1333,13 @@ class CookieAuthUploader:
         response: httpx.Response,
         success_list: list[str] | None = None,
     ) -> bool:
+        error_message = extract_upload_error(response.text)
         message = [
-            "data error: The upload appears to have failed. It may have uploaded, go check.",
+            (
+                f"Tracker rejected the upload: {error_message}"
+                if error_message
+                else "data error: The upload appears to have failed. It may have uploaded, go check."
+            ),
             self._failure_criterion_message(
                 success_status_code,
                 success_text,
@@ -1335,9 +1348,6 @@ class CookieAuthUploader:
                 response,
             ),
         ]
-        error_message = extract_upload_error(response.text)
-        if error_message:
-            message.append(f"Tracker error: {error_message}")
         failure_path = await self.common.save_html_file(
             meta, tracker, response.text, "Failed_Upload"
         )
