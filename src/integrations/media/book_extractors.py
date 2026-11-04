@@ -253,13 +253,15 @@ def _parse_epub_state(root: XmlElement) -> _EpubMetadataState:
 
 
 def _epub_author(state: _EpubMetadataState) -> str:
-    for creator_id, creator, inline_role in state.creators:
-        if (
-            inline_role == "aut"
-            or state.creator_roles.get(creator_id) == "aut"
-        ):
-            return creator
-    return state.creators[0][1] if state.creators else ""
+    authors = [
+        creator
+        for creator_id, creator, inline_role in state.creators
+        if inline_role == "aut"
+        or state.creator_roles.get(creator_id) == "aut"
+    ]
+    if not authors and state.creators:
+        authors = [state.creators[0][1]]
+    return ", ".join(authors)
 
 
 def _epub_year(date: str) -> str:
@@ -561,8 +563,12 @@ def _record_mobi_element(
             state.identifier = identifier
         return
     attribute = _MOBI_TEXT_FIELDS.get(tag_local)
-    if attribute is not None:
-        setattr(state, attribute, text)
+    if attribute is None:
+        return
+    if attribute == "author" and state.author:
+        state.author = f"{state.author}, {text}"
+        return
+    setattr(state, attribute, text)
 
 
 def _parse_mobi_state(root: XmlElement) -> _MobiMetadataState:

@@ -147,7 +147,8 @@ class MyAnonamouseManager:
     @classmethod
     def _people_names(cls, value: Any) -> list[str]:
         people = cls._decoded_people(value)
-        return [html.unescape(str(name)).strip() for name in people.values()]
+        ordered = sorted(people.items(), key=lambda item: str(item[0]))
+        return [html.unescape(str(name)).strip() for _key, name in ordered]
 
     @classmethod
     def _add_people_field(
