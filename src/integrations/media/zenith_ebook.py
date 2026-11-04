@@ -49,6 +49,13 @@ _ORDINALS = {
 }
 _NAMED_EDITIONS = {"scholar", "definitive", "annotated", "revised"}
 _FORBIDDEN = re.compile(r'[/:*?"<>|]')
+_EDITION_PHRASE = re.compile(
+    r"(?:^|[\s,;-]+)(?:first|second|third|fourth|fifth|sixth|seventh|"
+    r"eighth|ninth|tenth|scholar|definitive|annotated|revised|"
+    r"\d+(?:st|nd|rd|th))\s+(?:edition|ed\.?)\b",
+    re.IGNORECASE,
+)
+_SHORT_EDITION_PHRASE = re.compile(r"(?:^|[\s_-]+)(\d+)[eE]\b")
 
 
 def _text(value: Any) -> str:
@@ -160,6 +167,9 @@ def title(meta: Any) -> str:
     value = clean_book_title(meta.title or "", author)
     token = edition(meta)
     value = _without_edition(value, token)
+    value = _EDITION_PHRASE.sub(" ", value)
+    value = _SHORT_EDITION_PHRASE.sub(" ", value)
+    value = re.sub(r"\(\s*\)", "", value)
     value = _YEAR_GROUP.sub(" ", value)
     value = _ISBN_VALUE.sub(" ", value)
     value = _without_book_subtitle(value)

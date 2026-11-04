@@ -19,6 +19,7 @@ _DUPLICATE_YEAR = re.compile(r"\((\d{4})\)\s+\1\b")
 _SPACED_HASH = re.compile(r"\b([A-Za-z])\s+#(?=\d)")
 _SEPARATOR = re.compile(r"\s+[-\u2013\u2014]\s+")
 _WHITESPACE = re.compile(r"\s+")
+_WORD = re.compile(r"[^\W_]+(?:['-][^\W_]+)*", re.UNICODE)
 
 
 def _folded(value: str) -> str:
@@ -44,6 +45,30 @@ def _ordinal(value: int) -> str:
     return f"{value}{suffix}"
 
 
+def _dedupe_author_variants(text: str) -> str:
+    """Collapse 'François Chollet Francois Chollet' to one full name."""
+    matches = list(_WORD.finditer(text))
+    tokens = [token for match in matches if (token := _tokens(match.group()))]
+    if len(matches) < 4 or len(tokens) != len(matches):
+        return text
+    for size in (2, 3, 4):
+        if len(tokens) < size * 2:
+            continue
+        base = tokens[:size]
+        end = 0
+        index = size
+        while index + size <= len(tokens):
+            if sorted(tokens[index : index + size]) != sorted(base):
+                break
+            index += size
+            end = matches[index - 1].end()
+        if end:
+            prefix_end = matches[size - 1].end()
+            tail = text[end:].lstrip(" ,;&-")
+            return (text[:prefix_end] + (f" {tail}" if tail else "")).strip()
+    return text
+
+
 def canonical_book_author(meta: Any) -> str:
     """Return the full author list, never a surname fragment."""
     for value in (meta.book_author, meta.author):
@@ -52,6 +77,17 @@ def canonical_book_author(meta: Any) -> str:
             text = _WHITESPACE.sub(" ", text.replace("_", " ")).strip()
             if any(character.isalpha() for character in text) and text.isupper():
                 text = text.title()
+            text = _dedupe_author_variants(text)
+            if text.count(",") == 1:
+                last, first = (part.strip() for part in text.split(",", 1))
+                if (
+                    last
+                    and first
+                    and "," not in first
+                    and not re.search(r"\b(?:and|with|y)\b", first, re.IGNORECASE)
+                    and not (len(_tokens(last)) >= 2 and len(_tokens(first)) >= 2)
+                ):
+                    text = f"{first} {last}"
             return text
     return ""
 
