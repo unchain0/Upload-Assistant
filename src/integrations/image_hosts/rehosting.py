@@ -1718,6 +1718,31 @@ async def _persist_uploaded_images(
         _cleanup_cover_files(meta, screens)
 
 
+def _hosted_image_count(images: Sequence[Mapping[str, str]]) -> int:
+    return sum(
+        1
+        for image in images
+        if str(image.get("img_url") or image.get("raw_url") or "").startswith(
+            "http"
+        )
+    )
+
+
+def _require_hosted_book_images(
+    meta: Meta, images: Sequence[Mapping[str, str]]
+) -> None:
+    """A local render is not enough: the description only has hosted URLs."""
+    if str(meta.category or "").upper() != "BOOK" or meta.audiobook:
+        return
+    hosted = _hosted_image_count(images)
+    if hosted >= 3:
+        return
+    raise BookScreenshotsMissingError(
+        "BOOK upload needs at least 3 hosted images in the description; "
+        f"the image host returned {hosted}"
+    )
+
+
 async def _perform_image_upload(
     meta: Meta,
     tracker: str,
@@ -1747,12 +1772,14 @@ async def _perform_image_upload(
             "[red]No screenshots were generated or found. Please check the "
             "screenshot generation process."
         )
+        _require_hosted_book_images(meta, [])
         return [], True, False
     screens = _selected_screens(meta, tracker, screens, requested)
     upload_index, retry_mode = _select_approved_upload_host(
         meta, tracker, default_config, approved_hosts, img_host_index
     )
     if upload_index is None:
+        _require_hosted_book_images(meta, [])
         return [], True, retry_mode
     tracker_images = await _upload_approved_screens(
         meta,
@@ -1771,7 +1798,9 @@ async def _perform_image_upload(
             f"[red]Unsupported image host detected in URL '{invalid_url}'. "
             "Please use one of the approved image hosts."
         )
+        _require_hosted_book_images(meta, [])
         return tracker_images, True, True
+    _require_hosted_book_images(meta, tracker_images)
     await _persist_uploaded_images(
         meta, tracker, screenshot_path, screens, tracker_images
     )
