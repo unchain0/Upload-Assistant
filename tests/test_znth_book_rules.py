@@ -221,3 +221,18 @@ def test_retail_only_appears_when_the_filename_has_it() -> None:
     )
     assert "Retail" not in asyncio.run(tracker.get_name(without))["name"]
     assert "Retail" in asyncio.run(tracker.get_name(with_retail))["name"]
+
+
+def test_release_name_keeps_every_author_in_metadata_order() -> None:
+    meta = Meta(
+        category="BOOK",
+        type="PDF",
+        title="Python Machine Learning",
+        author="Vahid Mirjalili Sebastian Raschka",
+        book_author="Sebastian Raschka, Vahid Mirjalili",
+        year=2019,
+        book_language_iso="eng",
+        filelist=["book.pdf"],
+    )
+    name = asyncio.run(_tracker().get_name(meta))["name"]
+    assert name.startswith("Sebastian Raschka, Vahid Mirjalili - Python Machine Learning")
