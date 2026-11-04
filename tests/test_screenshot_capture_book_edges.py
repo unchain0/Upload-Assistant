@@ -1214,7 +1214,7 @@ def test_book_screenshots_render_azw3_pages(monkeypatch) -> None:
 
     async def fake_document(path, extension, *args, **kwargs):
         calls["extension"] = extension
-        return ["page1.png"]
+        return ["cover.png", "isbn.png", "page.png"]
 
     async def fake_cover(*_args, **_kwargs):
         return None
@@ -1232,7 +1232,7 @@ def test_book_screenshots_render_azw3_pages(monkeypatch) -> None:
         )
     )
 
-    assert images == ["page1.png"]
+    assert images == ["cover.png", "isbn.png", "page.png"]
     assert calls["extension"] == "azw3"
 
 
@@ -1258,3 +1258,19 @@ def test_book_screenshots_fail_when_no_page_can_be_rendered(
                 "/tmp/book.azw3", "book.azw3", "u1", "/tmp/book", meta, 3
             )
         )
+
+
+def test_document_pages_include_cover_isbn_and_content() -> None:
+    from src.integrations.media.screenshot_capture import (
+        _priority_document_pages,
+    )
+
+    pages = _priority_document_pages(
+        40,
+        ["", "Contents", "Copyright 2008 ISBN 9780192806963"],
+        3,
+    )
+    assert pages[0] == 0
+    assert 2 in pages
+    assert len(pages) >= 3
+    assert any(page not in {0, 2} for page in pages)

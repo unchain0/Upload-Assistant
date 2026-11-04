@@ -370,7 +370,9 @@ def _audiobook_command(
 def _ebook_override_values(meta: Meta) -> dict[str, object]:
     return {
         "--author": _preferred_text(meta.author, meta.book_author),
-        "--title": _preferred_text(meta.title, meta.book_title),
+        "--title": _without_book_subtitle(
+            _preferred_text(meta.title, meta.book_title)
+        ),
         "--year": meta.year,
         "--isbn": _preferred_text(meta.isbn, meta.book_isbn),
         "--series": meta.book_series,
@@ -554,6 +556,16 @@ _FILENAME_TRANSLATION = str.maketrans(
 )
 
 
+def _without_book_subtitle(value: str) -> str:
+    """Zenith titles are the official title only; a long colon suffix is the subtitle."""
+    head, separator, tail = value.partition(":")
+    if not separator:
+        return value
+    if len(tail.split()) < 6:
+        return value
+    return head.strip()
+
+
 def _natural_title(value: str) -> str:
     match = re.match(r"^(?P<body>.+),\s*(?P<article>The|A|An)$", value, re.IGNORECASE)
     if match:
@@ -569,7 +581,7 @@ def fallback_ebook_filename(meta: Meta) -> str | None:
     keeps rejecting the upload instead of inventing a name.
     """
     author = str(meta.author or "").strip()
-    title = _natural_title(str(meta.title or "").strip())
+    title = _without_book_subtitle(_natural_title(str(meta.title or "").strip()))
     year = "" if meta.year is None else str(meta.year)
     language = str(meta.book_language_iso or "").strip().upper()
     isbn = str(meta.isbn or "").strip()

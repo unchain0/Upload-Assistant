@@ -57,6 +57,7 @@ from src.integrations.media.book_extractors import (
 )
 from src.integrations.media.media_info import MediaInfo
 from src.integrations.media.media_info_export import export_info
+from src.integrations.media.zentag import _without_book_subtitle
 from src.integrations.observability.runtime_support import logger
 from src.services.book_input_service import (
     detect_newspaper,
@@ -1058,7 +1059,8 @@ def _detected_audiobook_edition(*values: str | None) -> str | None:
 
 
 def _clean_embedded_book_title(value: str) -> str:
-    cleaned = re.sub(r"\s*\[[^\]]*\]", "", value)
+    cleaned = _without_book_subtitle(value)
+    cleaned = re.sub(r"\s*\[[^\]]*\]", "", cleaned)
     cleaned = re.sub(
         r"\s*[\(\[\{-]?\s*\b(unabridged|abridged)\b\s*[\)\]\}]?\s*",
         " ",
