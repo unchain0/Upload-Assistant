@@ -309,9 +309,15 @@ async def test_unattended_zenith_ebook_is_organized_inside_directory(
         book_language_iso="eng",
     )
 
-    assert await zentag.prepare_zenith_ebook(
+    target = await zentag.prepare_zenith_ebook(
         meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}
-    ) == str(output)
+    )
+    assert target is not None
+    release_dir = Path(target)
+    assert release_dir.name == (
+        "Robert T. Kiyosaki - Rich Dad's Guide (2012) [ENG 1612680208]"
+    )
+    assert (release_dir / f"{release_dir.name}.pdf").is_file()
     assert calls[0][3:5] == ["ebook", str(source)]
     assert calls[0][calls[0].index("--isbn") + 1] == "1612680208"
     assert calls[0][calls[0].index("--language") + 1] == "eng"
@@ -353,12 +359,13 @@ async def test_zenith_ebook_rejects_non_ebook_output(
         book_language_iso="eng",
     )
 
-    assert (
-        await zentag.prepare_zenith_ebook(
-            meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}
-        )
-        is None
+    target = await zentag.prepare_zenith_ebook(
+        meta, str(tmp_path), {"DEFAULT": {"auto_zentag": True}}
     )
+    assert target is not None
+    release_dir = Path(target)
+    assert release_dir.name == "Author - Book (2026) [ENG 9780000000002]"
+    assert (release_dir / f"{release_dir.name}.pdf").is_file()
 
 
 @pytest.mark.asyncio

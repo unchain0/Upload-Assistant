@@ -89,6 +89,12 @@ class GoogleBooksManager:
             metadata["overview"] = re.sub(r"<[^>]+>", "", description).strip()
 
     @staticmethod
+    def _add_edition(metadata: Metadata, volume_info: dict[str, Any]) -> None:
+        edition = volume_info.get("edition")
+        if isinstance(edition, str) and edition.strip():
+            metadata["edition"] = edition.strip()
+
+    @staticmethod
     def _add_year(metadata: Metadata, volume_info: dict[str, Any]) -> None:
         published_date = volume_info.get("publishedDate")
         if not published_date:
@@ -167,6 +173,7 @@ class GoogleBooksManager:
         self._add_cover(metadata, volume)
         self._add_title(metadata, volume_info)
         self._add_author_publisher(metadata, volume_info)
+        self._add_edition(metadata, volume_info)
         self._add_description(metadata, volume_info)
         self._add_year(metadata, volume_info)
         self._add_language(metadata, volume_info)
