@@ -1244,6 +1244,17 @@ class Zenith(UNIT3D):
         )
 
     @staticmethod
+    def _wiki_named_single_ebook(meta: Meta, filelist: list[Any]) -> bool:
+        from src.integrations.media import zenith_ebook
+
+        if meta.audiobook or len(filelist) != 1:
+            return False
+        path = Path(str(filelist[0]))
+        if not path.is_file():
+            return False
+        return zenith_ebook.validate_filename(path.stem, meta) is None
+
+    @staticmethod
     def _prepared_ebook_single_file(meta: Meta, filelist: list[Any]) -> bool:
         """eBooks are uploaded as one file; the tracker wraps them."""
         prepared = bool(
@@ -1263,9 +1274,11 @@ class Zenith(UNIT3D):
             return True
         if self._prepared_ebook_single_file(meta, filelist):
             return True
+        if self._wiki_named_single_ebook(meta, filelist):
+            return True
         if not meta.isdir:
             logger.info(
-                f"{self.tracker}: [bold red]Books and audiobooks must be uploaded inside a directory. Use zentag to create a compliant copy.[/bold red]"
+                f"{self.tracker}: [bold red]A single ebook file must be prepared by zentag or already follow the wiki filename. Otherwise upload a directory with --keep-folder after preparation.[/bold red]"
             )
             return False
         if len(filelist) == 1 and not meta.keep_folder:

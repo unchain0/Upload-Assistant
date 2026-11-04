@@ -167,12 +167,16 @@ def _without_edition(value: str, token: str) -> str:
     )
 
 
+def _without_subtitle(value: str) -> str:
+    head, separator, _tail = value.partition(":")
+    return head.strip() if separator else value
+
+
 def title(meta: Any) -> str:
     from src.domain_models.book_naming import (
         canonical_book_author,
         clean_book_title,
     )
-    from src.integrations.media.zentag import _without_book_subtitle
 
     author = canonical_book_author(meta)
     value = clean_book_title(meta.title or "", author)
@@ -183,7 +187,7 @@ def title(meta: Any) -> str:
     value = re.sub(r"\(\s*\)", "", value)
     value = _YEAR_GROUP.sub(" ", value)
     value = _ISBN_VALUE.sub(" ", value)
-    value = _without_book_subtitle(value)
+    value = _without_subtitle(value)
     value = re.sub(r"\s+", " ", value).strip(" -,.;")
     match = re.match(
         r"^(?P<body>.+),\s*(?P<article>The|A|An)$", value, re.IGNORECASE
