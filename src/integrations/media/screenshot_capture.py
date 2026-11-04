@@ -120,7 +120,7 @@ async def _is_black_frame(image_path: str | Path) -> bool:
     """Return whether a captured frame is an unusable near-black screen."""
     try:
         mean_luma = await asyncio.to_thread(_mean_luma, image_path)
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return False
     return mean_luma < BLACK_FRAME_MEAN_LUMA
 
@@ -3605,6 +3605,11 @@ def _lone_image_clip(page: Any, fitz_module: Any) -> tuple[Any, float] | None:
     )
 
 
+def _layout_ebook_document(document: Any, extension: str) -> None:
+    if extension == "epub" and getattr(document, "is_reflowable", False):
+        document.layout(width=720, height=960, fontsize=11)
+
+
 def _render_document_page_sync(
     document: Any,
     fitz_module: Any,
@@ -3723,6 +3728,11 @@ async def _generate_document_screenshots(
                 f"[yellow]{extension.upper()} does not have pages[/yellow]"
             )
             return []
+        _layout_ebook_document(document, extension)
+        if extension == "epub" and getattr(document, "is_reflowable", False):
+            total_pages = len(document)
+        if total_pages == 0:
+            return []
         page_texts = []
         for index in range(min(total_pages, 25)):
             page = document[index]
@@ -3789,6 +3799,10 @@ async def generate_ebook_screenshots(
     banner_path = poster_dir / "POSTER_BANNER.png"
     sanitized_filename = await sanitize_filename(filename)
     extension = Path(path).suffix.lower().lstrip(".")
+    if meta.retake:
+        clear_screenshot_group(base_dir, folder_id, "main")
+        for stale in output_dir.glob("*.png"):
+            stale.unlink(missing_ok=True)
     prepared_cover = bool(
         await prepare_book_cover(path, folder_id, base_dir, meta)
     )
@@ -3969,9 +3983,18 @@ async def _book_screenshot_result(
         return []
     requested = num_screens if num_screens > 0 else int(meta.screens or 0)
     requested = max(requested, 3)
+    output_dir = screenshots_dir(base_dir, folder_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    clear_screenshot_group(base_dir, folder_id, "main")
+    for stale in output_dir.glob("*.png"):
+        stale.unlink(missing_ok=True)
     images = await generate_ebook_screenshots(
         path, filename, folder_id, base_dir, meta, requested
     )
+    images = [
+        str(path)
+        for path in register_screenshots(base_dir, folder_id, images, "main")
+    ]
     if len(images) < 3:
         raise BookScreenshotsMissingError(
             "BOOK upload needs at least 3 page screenshots (cover, "

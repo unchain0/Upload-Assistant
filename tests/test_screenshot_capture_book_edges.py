@@ -834,6 +834,22 @@ def test_generate_ebook_screenshots_cbz_cbr_pdf_epub_and_errors(
         )
     )
     assert len(screenshots) == 2
+    meta.retake = True
+    repeated_screenshots = asyncio.run(
+        capture.generate_ebook_screenshots(
+            str(cbz),
+            "Renamed Comic",
+            meta.uuid,
+            meta.base_dir,
+            meta,
+            num_screens=2,
+        )
+    )
+    assert len(repeated_screenshots) == 2
+    assert (
+        len(list((tmp_path / "tmp" / meta.uuid / "screenshots").glob("*.png")))
+        == 2
+    )
     assert (
         Path(meta.artwork_path).is_file()
         and Path(meta.artwork_banner_path).is_file()
@@ -932,6 +948,11 @@ def test_generate_ebook_screenshots_cbz_cbr_pdf_epub_and_errors(
             )
 
     class FakeDocument:
+        is_reflowable = True
+
+        def layout(self, **kwargs: object) -> None:
+            assert kwargs == {"width": 720, "height": 960, "fontsize": 11}
+
         def __len__(self) -> int:
             return 2
 
@@ -1204,7 +1225,7 @@ def test_epub_absolute_style_href_is_safely_resolved_inside_archive(
     assert output.read_bytes() == b"absolute-cover"
 
 
-def test_book_screenshots_render_azw3_pages(monkeypatch) -> None:
+def test_book_screenshots_render_azw3_pages(monkeypatch, tmp_path) -> None:
     import asyncio
 
     from src.domain_models.release import Meta
@@ -1212,9 +1233,15 @@ def test_book_screenshots_render_azw3_pages(monkeypatch) -> None:
 
     calls: dict[str, str] = {}
 
-    async def fake_document(path, extension, *args, **kwargs):
+    async def fake_document(_path, extension, _filename, output_dir, *_args):
         calls["extension"] = extension
-        return ["cover.png", "isbn.png", "page.png"]
+        output_dir.mkdir(parents=True, exist_ok=True)
+        paths = [
+            output_dir / name for name in ("cover.png", "isbn.png", "page.png")
+        ]
+        for path in paths:
+            path.write_bytes(b"page")
+        return [str(path) for path in paths]
 
     async def fake_cover(*_args, **_kwargs):
         return None
@@ -1223,21 +1250,29 @@ def test_book_screenshots_render_azw3_pages(monkeypatch) -> None:
         capture, "_generate_document_screenshots", fake_document
     )
     monkeypatch.setattr(capture, "prepare_book_cover", fake_cover)
-    monkeypatch.setattr(capture, "_book_banner_cached", lambda *a, **k: False)
+    monkeypatch.setattr(
+        capture, "_book_banner_cached", lambda *_a, **_k: False
+    )
 
-    meta = Meta(category="BOOK", base_dir="/tmp/book", uuid="u1", screens=3)
+    meta = Meta(category="BOOK", base_dir=str(tmp_path), uuid="u1", screens=3)
     images = asyncio.run(
         capture._book_screenshot_result(
-            "/tmp/book.azw3", "book.azw3", "u1", "/tmp/book", meta, 3
+            str(tmp_path / "book.azw3"),
+            "book.azw3",
+            "u1",
+            str(tmp_path),
+            meta,
+            3,
         )
     )
 
-    assert images == ["cover.png", "isbn.png", "page.png"]
+    assert len(images) == 3
+    assert all(Path(image).is_file() for image in images)
     assert calls["extension"] == "azw3"
 
 
 def test_book_screenshots_fail_when_no_page_can_be_rendered(
-    monkeypatch,
+    monkeypatch, tmp_path
 ) -> None:
     import asyncio
 
@@ -1251,11 +1286,16 @@ def test_book_screenshots_fail_when_no_page_can_be_rendered(
 
     monkeypatch.setattr(capture, "generate_ebook_screenshots", empty)
 
-    meta = Meta(category="BOOK", base_dir="/tmp/book", uuid="u1", screens=3)
+    meta = Meta(category="BOOK", base_dir=str(tmp_path), uuid="u1", screens=3)
     with pytest.raises(capture.BookScreenshotsMissingError):
         asyncio.run(
             capture._book_screenshot_result(
-                "/tmp/book.azw3", "book.azw3", "u1", "/tmp/book", meta, 3
+                str(tmp_path / "book.azw3"),
+                "book.azw3",
+                "u1",
+                str(tmp_path),
+                meta,
+                3,
             )
         )
 
@@ -1274,3 +1314,77 @@ def test_document_pages_include_cover_isbn_and_content() -> None:
     assert 2 in pages
     assert len(pages) >= 3
     assert any(page not in {0, 2} for page in pages)
+
+
+def test_epub_reflowable_document_gets_css_layout() -> None:
+    from src.integrations.media.screenshot_capture import (
+        _layout_ebook_document,
+    )
+
+    class Reflowable:
+        is_reflowable = True
+
+        def layout(self, **kwargs):
+            self.layout_args = kwargs
+
+    document = Reflowable()
+    _layout_ebook_document(document, "epub")
+    assert document.layout_args == {
+        "width": 720,
+        "height": 960,
+        "fontsize": 11,
+    }
+
+
+def test_pdf_does_not_receive_epub_layout() -> None:
+    from src.integrations.media.screenshot_capture import (
+        _layout_ebook_document,
+    )
+
+    class FixedLayout:
+        is_reflowable = False
+
+    _layout_ebook_document(FixedLayout(), "pdf")
+
+
+def test_book_result_replaces_previous_screenshot_generation(
+    tmp_path: Path,
+) -> None:
+    import asyncio
+
+    import fitz
+
+    from src.domain_models.release import Meta
+    from src.integrations.media import screenshot_capture as capture
+
+    pdf = tmp_path / "book.pdf"
+    document = fitz.open()
+    for index in range(4):
+        page = document.new_page()
+        page.insert_text((50, 50), f"Copyright page {index}")
+    document.save(pdf)
+    document.close()
+    meta = Meta(
+        category="BOOK",
+        base_dir=str(tmp_path),
+        uuid="repeat-book",
+        screens=3,
+        artwork_path="",
+    )
+
+    first = asyncio.run(
+        capture._book_screenshot_result(
+            str(pdf), "Old filename", meta.uuid, meta.base_dir, meta, 3
+        )
+    )
+    second = asyncio.run(
+        capture._book_screenshot_result(
+            str(pdf), "New filename", meta.uuid, meta.base_dir, meta, 3
+        )
+    )
+    active = capture.manifest_files(meta.base_dir, meta.uuid, "main")
+    assert len(first) == len(second) == len(active) == 3
+    assert (
+        len(list((tmp_path / "tmp" / meta.uuid / "screenshots").glob("*.png")))
+        == 3
+    )

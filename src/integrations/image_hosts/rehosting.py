@@ -1,6 +1,7 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 import asyncio
 import glob
+import hashlib
 import inspect
 import json
 import re
@@ -1556,6 +1557,23 @@ def _log_uploaded_images(
         )
 
 
+def _unique_screenshot_files(screens: Sequence[str]) -> list[str]:
+    """Drop byte-identical generations before any image host sees them."""
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in screens:
+        path = Path(value)
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        if digest in seen:
+            continue
+        seen.add(digest)
+        unique.append(str(path))
+    return unique
+
+
 async def _upload_approved_screens(
     meta: Meta,
     tracker: str,
@@ -1764,6 +1782,8 @@ async def _perform_image_upload(
     )
     if tracker == "covers":
         requested = len(screens)
+    if meta.category == "BOOK":
+        screens = _unique_screenshot_files(screens)
     screens = await _ensure_screens(
         meta, takescreens_manager, screens, requested, path, filename
     )
@@ -1774,7 +1794,9 @@ async def _perform_image_upload(
         )
         _require_hosted_book_images(meta, [])
         return [], True, False
-    screens = _selected_screens(meta, tracker, screens, requested)
+    screens = _unique_screenshot_files(
+        _selected_screens(meta, tracker, screens, requested)
+    )
     upload_index, retry_mode = _select_approved_upload_host(
         meta, tracker, default_config, approved_hosts, img_host_index
     )
