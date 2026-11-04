@@ -130,6 +130,9 @@ def _metadata_values(value: Any) -> list[str]:
 
 
 class MyAnonamouseManager:
+    def __init__(self) -> None:
+        self.auth_rejected = False
+
     @staticmethod
     def _decoded_people(value: Any) -> dict[Any, Any]:
         if isinstance(value, dict):
@@ -417,6 +420,7 @@ class MyAnonamouseManager:
                 response.json(), cache, clean_id
             )
         if response.status_code in (401, 403):
+            self.auth_rejected = True
             logger.info(
                 f"{mam_color}: [bold red]API: Unauthorized/Forbidden (Status {response.status_code}). Check your mam_api_key/mam_id and IP locked session cookie setting on the website.[/bold red]"
             )

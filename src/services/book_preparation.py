@@ -12,6 +12,8 @@ import asyncio
 import contextlib
 import os
 import re
+import subprocess
+import sys
 import unicodedata
 import zipfile
 from dataclasses import dataclass
@@ -1572,6 +1574,31 @@ def _apply_provider_metadata(
         _apply_provider_value(ctx.meta, key, value, data)
 
 
+def _refresh_mam_cookie() -> bool:
+    """Refresh the stored cookie once. Missing paths are not an error."""
+
+    script = Path(__file__).resolve().parents[1].parent / "scripts" / "sync_mam_cookie.py"
+    database = Path.home() / ".config" / "autobrr" / "autobrr.db"
+    config_path = Path(os.environ.get("UA_CONFIG", "") or "")
+    if not script.is_file() or not database.is_file() or not config_path.is_file():
+        return False
+    completed = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            str(script),
+            "--autobrr-db",
+            str(database),
+            "--ua-config",
+            str(config_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    logger.info(completed.stderr.strip() or "mam cookie sync produced no output")
+    return completed.returncode == 0
+
+
 async def _fetch_mam_metadata(
     ctx: _BookPrepContext, mam_id: str | None
 ) -> dict[str, Any] | None:
@@ -1585,6 +1612,12 @@ async def _fetch_mam_metadata(
         result = await myanonamouse_manager.search_by_id(
             mam_id, base_dir=ctx.base_dir, api_key=_mam_api_key(ctx.config)
         )
+        if result is None and myanonamouse_manager.auth_rejected:
+            myanonamouse_manager.auth_rejected = False
+            if _refresh_mam_cookie():
+                result = await myanonamouse_manager.search_by_id(
+                    mam_id, base_dir=ctx.base_dir, api_key=_mam_api_key(ctx.config)
+                )
         return (
             cast(dict[str, Any], result) if isinstance(result, dict) else None
         )
