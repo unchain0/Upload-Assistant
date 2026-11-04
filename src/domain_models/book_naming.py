@@ -78,6 +78,14 @@ def canonical_book_author(meta: Any) -> str:
             if any(character.isalpha() for character in text) and text.isupper():
                 text = text.title()
             text = _dedupe_author_variants(text)
+            lookup = _safe_text(meta.get("lookup_author"))
+            if lookup:
+                current_tokens = set(_tokens(text))
+                lookup_tokens = _tokens(lookup)
+                if current_tokens and current_tokens <= set(lookup_tokens):
+                    text = _dedupe_author_variants(
+                        _WHITESPACE.sub(" ", lookup)
+                    )
             if text.count(",") == 1:
                 last, first = (part.strip() for part in text.split(",", 1))
                 if (

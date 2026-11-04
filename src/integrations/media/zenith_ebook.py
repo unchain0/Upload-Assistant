@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -60,6 +61,16 @@ _SHORT_EDITION_PHRASE = re.compile(r"(?:^|[\s_-]+)(\d+)[eE]\b")
 
 def _text(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def _tokens(value: Any) -> list[str]:
+    folded = (
+        unicodedata.normalize("NFKD", str(value or ""))
+        .encode("ascii", "ignore")
+        .decode("ascii")
+        .casefold()
+    )
+    return re.findall(r"[a-z0-9]+", folded)
 
 
 _EDITION_WORDS = {
@@ -259,6 +270,26 @@ def filename(meta: Any) -> str | None:
     return f"{name.translate(_FILENAME_TRANSLATION)}{extension}"
 
 
+def _contains_sequence(tokens: list[str], needle: list[str]) -> bool:
+    if not needle:
+        return True
+    size = len(needle)
+    return any(
+        tokens[index : index + size] == needle
+        for index in range(len(tokens) - size + 1)
+    )
+
+
+def _sequence_count(tokens: list[str], needle: list[str]) -> int:
+    if not needle:
+        return 0
+    size = len(needle)
+    return sum(
+        tokens[index : index + size] == needle
+        for index in range(len(tokens) - size + 1)
+    )
+
+
 def validate_filename(stem: str, meta: Any) -> str | None:
     """Return a human-readable reason when the prepared name breaks the guide."""
     if not stem:
@@ -269,16 +300,19 @@ def validate_filename(stem: str, meta: Any) -> str | None:
         return "underscore in the ebook filename"
     if "undefined" in stem.casefold():
         return "'undefined' in the ebook filename"
-    author, book_title, book_year, lang, isbn = _required(meta)
+    author, _book_title, book_year, lang, isbn = _required(meta)
     if not isbn:
         return "ISBN is required in the ebook filename"
     bracket = re.search(r"\[([^\]]+)\]\s*$", stem)
     if " - " not in stem or not bracket:
         return "filename does not follow 'Author - [Series # - ]Title (Year) [LANG Edition ISBN Retail]'"
-    if stem.casefold().count(author.casefold()) != 1:
+    stem_tokens = _tokens(stem)
+    author_tokens = _tokens(author)
+    if _sequence_count(stem_tokens, author_tokens) != 1:
         return "author is missing or repeated in the ebook filename"
-    if book_title.casefold() not in stem.casefold():
-        return f"title '{book_title}' is missing from the ebook filename"
+    expected_title = title(meta)
+    if not _contains_sequence(stem_tokens, _tokens(expected_title)):
+        return f"title '{expected_title}' is missing from the ebook filename"
     if f"({book_year})" not in stem:
         return f"year ({book_year}) is missing from the ebook filename"
     if len(re.findall(r"\(\d{4}\)", stem)) != 1:

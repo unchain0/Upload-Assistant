@@ -1567,6 +1567,8 @@ def _apply_provider_metadata(
     for key, value in data.items():
         if not value:
             continue
+        if key == "author" and not ctx.meta.get("lookup_author"):
+            ctx.meta.update({"lookup_author": value})
         if _provider_field_blocked(
             ctx, key, prior, artwork_may_override=artwork_may_override
         ):
