@@ -31,11 +31,11 @@ def test_fallback_filename_matches_the_wiki_pattern() -> None:
 
 def test_fallback_filename_applies_the_character_substitutions() -> None:
     name = fallback_ebook_filename(
-        _meta(title="PHP: MySQL | JavaScript? <All-in-One> *Guide*")
+        _meta(title="PHP/MySQL | JavaScript? <All-in-One> *Guide*")
     )
     assert name is not None
     assert name.startswith(
-        "J.K. Rowling - Harry Potter #4 - PHP- MySQL - JavaScript All-in-One Guide"
+        "J.K. Rowling - Harry Potter #4 - PHP-MySQL - JavaScript All-in-One Guide"
     )
 
 

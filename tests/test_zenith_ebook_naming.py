@@ -153,15 +153,15 @@ def test_series_uses_hash_and_sits_before_the_title() -> None:
 def test_substitutions_apply_only_to_the_filename() -> None:
     meta = _meta(
         "Some Author",
-        "Half: A Story/Test",
+        "Half/Test: A Story",
         2020,
         "9780000000002",
         "epub",
     )
     assert fallback_ebook_filename(meta) == (
-        "Some Author - Half- A Story-Test (2020) [ENG 9780000000002].epub"
+        "Some Author - Half-Test (2020) [ENG 9780000000002].epub"
     )
-    assert ":" in TRACKER._book_release_name(meta)
+    assert "/" in TRACKER._book_release_name(meta)
 
 
 def test_duplicate_author_in_the_title_is_removed_from_the_filename() -> None:
@@ -482,3 +482,66 @@ def test_lookup_author_keeps_three_names() -> None:
     assert fallback_ebook_filename(meta) == (
         "A One, B Two, C Three - Book (2020) [ENG 9780000000002].epub"
     )
+
+
+def test_zenith_always_removes_the_colon_subtitle() -> None:
+    code = _meta(
+        "Charles Petzold",
+        "Code: The Hidden Language of Computer Hardware and Software",
+        2022,
+        "9780137909261",
+        "epub",
+        manual_edition="2nd",
+    )
+    assert fallback_ebook_filename(code) == (
+        "Charles Petzold - Code (2022) [ENG 2nd 9780137909261].epub"
+    )
+    assert TRACKER._book_release_name(code) == (
+        "Charles Petzold - Code 2022 ENG 2nd EPUB"
+    )
+
+    krug = _meta(
+        "Steve Krug",
+        "Don't Make Me Think, Revisited: A Common Sense Approach to Web Usability",
+        2014,
+        "9780133597462",
+        "epub",
+    )
+    assert fallback_ebook_filename(krug) == (
+        "Steve Krug - Don't Make Me Think, Revisited "
+        "(2014) [ENG 9780133597462].epub"
+    )
+    assert "A Common Sense Approach" not in TRACKER._book_release_name(krug)
+
+
+def test_single_file_already_named_by_the_wiki_passes_without_zentag(
+    tmp_path: Path,
+) -> None:
+    name = "Steve Krug - Don't Make Me Think, Revisited (2014) [ENG 9780133597462]"
+    book = tmp_path / f"{name}.epub"
+    book.write_bytes(b"book")
+    meta = _meta(
+        "Steve Krug",
+        "Don't Make Me Think, Revisited",
+        2014,
+        "9780133597462",
+        "epub",
+        path=str(book),
+        filelist=[str(book)],
+    )
+    assert TRACKER._book_folder_policy(meta, [str(book)], defer=False) is True
+
+
+def test_single_file_with_a_non_wiki_name_is_rejected(tmp_path: Path) -> None:
+    book = tmp_path / "book.epub"
+    book.write_bytes(b"book")
+    meta = _meta(
+        "Steve Krug",
+        "Don't Make Me Think, Revisited",
+        2014,
+        "9780133597462",
+        "epub",
+        path=str(book),
+        filelist=[str(book)],
+    )
+    assert TRACKER._book_folder_policy(meta, [str(book)], defer=False) is False
