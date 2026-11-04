@@ -3,6 +3,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from src.domain_models.book_naming import (
+    canonical_book_author,
+    clean_book_name,
+    clean_book_title,
+)
 from src.domain_models.release import Meta
 from src.integrations.observability.runtime_support import logger
 from src.integrations.trackers.common import Common
@@ -264,29 +269,19 @@ class CapybaraBR(UNIT3D):
         return str(meta.name or "")
 
     def _book_name(self, meta: Meta) -> str:
+        author = canonical_book_author(meta)
         title = self.common.portuguese_title_capitalization(
             self._book_title(meta)
         )
-        name = f"{title} - {meta.author} [{self._year_text(meta)}]{self._audiobook_suffix(meta)}"
-        return f"{name}{self._book_language_suffix(meta)}"
+        name = f"{title} - {author} [{self._year_text(meta)}]{self._audiobook_suffix(meta)}"
+        return clean_book_name(f"{name}{self._book_language_suffix(meta)}")
 
     @staticmethod
     def _book_title(meta: Meta) -> str:
-        """Normalize the title so the name is always "<titulo> - <autor>".
-
-        Sources hand back "Autor - Título", "Título - Autor" or a truncated
-        author fragment; leaving any of those in place duplicates the author
-        or inverts the order once the builder appends meta.author.
-        """
-        title = str(meta.title or "").strip()
-        author = str(meta.author or "").strip()
-        if not author:
-            return title
-        while True:
-            stripped = CapybaraBR._strip_author_segment(title, author)
-            if stripped == title:
-                return title
-            title = stripped
+        """Normalize the title so the name is always "<titulo> - <autor>"."""
+        return clean_book_title(
+            meta.title or "", canonical_book_author(meta)
+        )
 
     @staticmethod
     def _strip_author_segment(title: str, author: str) -> str:

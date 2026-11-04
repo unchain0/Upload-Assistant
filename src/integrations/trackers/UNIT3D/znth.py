@@ -8,6 +8,11 @@ from src.domain_models.book_language import (
     extract_first_author as _primary_name,
 )
 from src.domain_models.book_language import resolve_book_language
+from src.domain_models.book_naming import (
+    canonical_book_author,
+    clean_book_name,
+    clean_book_title,
+)
 from src.domain_models.release import Meta
 from src.domain_models.release_identity import ReleaseYearIdentity
 from src.integrations.media.zentag import _without_book_subtitle
@@ -1717,11 +1722,12 @@ class Zenith(UNIT3D):
         if _is_misc(meta):
             return meta.name
         identity = self._book_name_identity(meta)
-        return (
+        name = (
             self._audiobook_release_name(meta, identity)
             if meta.audiobook
             else self._ebook_release_name(meta, identity)
         )
+        return clean_book_name(name)
 
     @classmethod
     def _book_name_identity(cls, meta: Meta) -> tuple[str, str, str, str, str]:
@@ -1735,15 +1741,15 @@ class Zenith(UNIT3D):
 
     @staticmethod
     def _book_author(meta: Meta) -> str:
-        # The release name uses the same author as the metadata, commas included.
-        value = str(meta.book_author or meta.author or "").strip()
-        if "," in value:
-            return value
-        return _primary_name(value)
+        # Keep the canonical list; truncating loses every author but the first.
+        return canonical_book_author(meta)
 
     @staticmethod
     def _book_title(meta: Meta) -> str:
-        value = str(meta.title if meta.title else meta.name or "").strip()
+        value = clean_book_title(
+            meta.title if meta.title else meta.name or "",
+            canonical_book_author(meta),
+        )
         match = re.match(r"^(?P<body>.+),\s*(?P<article>The|A|An)$", value, re.IGNORECASE)
         if match:
             return f"{match.group('article').capitalize()} {match.group('body').strip()}"
