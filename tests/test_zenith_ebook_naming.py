@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from src.domain_models.release import Meta
@@ -81,18 +83,19 @@ def _meta(
     extension: str = "pdf",
     **values: object,
 ) -> Meta:
-    return Meta(
-        category="BOOK",
-        author=author,
-        title=title,
-        year=year,
-        isbn=isbn,
-        book_language_iso="eng",
-        type=extension.upper(),
-        path=f"/books/book.{extension}",
-        filelist=[f"/books/book.{extension}"],
-        **values,
-    )
+    defaults = {
+        "category": "BOOK",
+        "author": author,
+        "title": title,
+        "year": year,
+        "isbn": isbn,
+        "book_language_iso": "eng",
+        "type": extension.upper(),
+        "path": f"/books/book.{extension}",
+        "filelist": [f"/books/book.{extension}"],
+    }
+    defaults.update(values)
+    return Meta(**defaults)
 
 
 @pytest.mark.parametrize(
@@ -203,3 +206,123 @@ def test_missing_year_fails_before_the_upload() -> None:
     meta = _meta("Some Author", "A Book", None, "9780000000002")
     assert fallback_ebook_filename(meta) is None
     assert TRACKER._ebook_format_policy(meta) is False
+
+
+@pytest.mark.parametrize(
+    ("values", "expected"),
+    [
+        ({"edition": "Second Edition"}, "Second"),
+        ({"edition": "2nd Ed"}, "2nd"),
+        ({"title": "Book, 5th Ed"}, "5th"),
+        ({"title": "Book_5e"}, "5th"),
+        ({"title": "Book (First Edition)"}, ""),
+        ({"edition": "Definitive Edition"}, "Definitive"),
+        ({"edition": "Scholar"}, "Scholar"),
+        ({"edition": "Revised and Updated"}, "Revised"),
+    ],
+)
+def test_edition_detection(values: dict[str, object], expected: str) -> None:
+    from src.integrations.media.zenith_ebook import edition
+
+    defaults = {
+        "category": "BOOK",
+        "author": "A",
+        "title": "Book",
+        "year": 2020,
+        "isbn": "1",
+    }
+    defaults.update(values)
+    meta = Meta(**defaults)
+    assert edition(meta) == expected
+
+
+def test_google_books_and_openlibrary_supply_the_edition() -> None:
+    from src.integrations.external_apis.google_books import GoogleBooksManager
+    from src.integrations.external_apis.openlibrary import OpenLibraryManager
+
+    google: dict[str, object] = {}
+    GoogleBooksManager._add_edition(google, {"edition": "Definitive Edition"})
+    assert google["edition"] == "Definitive Edition"
+
+    details = {
+        "title": "The Road to Serfdom",
+        "edition_name": "Definitive",
+        "publishers": ["Routledge"],
+    }
+    metadata = OpenLibraryManager()._metadata_from_book_details({}, details, "9780226320540")
+    assert metadata["edition"] == "Definitive"
+
+
+@pytest.mark.asyncio
+async def test_prepare_names_the_single_ebook_even_when_zentag_fails(
+    tmp_path, monkeypatch
+) -> None:
+    from src.integrations.media import zentag
+
+    source = tmp_path / "The Road to Serfdom (2007).epub"
+    source.write_bytes(b"book")
+    meta = _meta(
+        "F. A. Hayek",
+        "The Road to Serfdom",
+        2007,
+        "9780226320540",
+        "epub",
+        edition="Definitive",
+        source="Retail",
+        path=str(source),
+        base_dir=str(tmp_path),
+        uuid="hayek",
+    )
+    monkeypatch.setattr(zentag, "should_prepare_zenith_ebook", lambda *_: True)
+
+    async def failing(*_args, **_kwargs):
+        raise RuntimeError("zentag naming mismatch")
+
+    monkeypatch.setattr(zentag, "_prepare_ebook_copy", failing)
+    target = await zentag.prepare_zenith_ebook(meta, str(tmp_path), {})
+    assert target is not None
+    release_dir = Path(target)
+    assert release_dir.name == (
+        "F. A. Hayek - The Road to Serfdom (2007) "
+        "[ENG Definitive 9780226320540 Retail]"
+    )
+    assert (release_dir / f"{release_dir.name}.epub").is_file()
+    assert TRACKER._book_release_name(meta) == (
+        "F. A. Hayek - The Road to Serfdom 2007 ENG Definitive EPUB Retail"
+    )
+
+
+@pytest.mark.asyncio
+async def test_prepare_renames_a_zentag_output_with_the_original_name(
+    tmp_path, monkeypatch
+) -> None:
+    from src.integrations.media import zentag
+
+    source = tmp_path / "The Road to Serfdom (2007).epub"
+    source.write_bytes(b"book")
+    prepared = tmp_path / "zentag"
+    prepared.mkdir()
+    (prepared / source.name).write_bytes(b"book")
+    meta = _meta(
+        "F. A. Hayek",
+        "The Road to Serfdom",
+        2007,
+        "9780226320540",
+        "epub",
+        edition="Definitive",
+        path=str(source),
+        base_dir=str(tmp_path),
+        uuid="hayek",
+    )
+    monkeypatch.setattr(zentag, "should_prepare_zenith_ebook", lambda *_: True)
+
+    async def original_name(*_args, **_kwargs):
+        return str(prepared)
+
+    monkeypatch.setattr(zentag, "_prepare_ebook_copy", original_name)
+    target = await zentag.prepare_zenith_ebook(meta, str(tmp_path), {})
+    assert target is not None
+    assert Path(target).name == (
+        "F. A. Hayek - The Road to Serfdom (2007) "
+        "[ENG Definitive 9780226320540]"
+    )

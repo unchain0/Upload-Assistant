@@ -1864,12 +1864,7 @@ class Zenith(UNIT3D):
                     language,
                     edition,
                     format_value,
-                    "Retail"
-                    if "retail"
-                    in " ".join(
-                        [meta.basename_no_ext, *[str(item) for item in meta.filelist]]
-                    ).lower()
-                    else "",
+                    "Retail" if zenith_ebook.retail(meta) else "",
                 )
             )
         )

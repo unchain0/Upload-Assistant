@@ -599,7 +599,23 @@ def fallback_ebook_filename(meta: Meta) -> str | None:
     return filename
 
 
-def _fallback_ebook_copy(meta: Meta, source: Path, base_dir: str) -> str | None:
+def _prepared_ebook_file(folder: str | Path) -> Path | None:
+    files = sorted(
+        path
+        for path in Path(folder).iterdir()
+        if path.is_file() and path.suffix.lower() in EBOOK_SUFFIXES
+    )
+    return files[0] if len(files) == 1 else None
+
+
+def _ebook_name_is_compliant(path: Path, meta: Meta) -> bool:
+    from src.integrations.media import zenith_ebook
+
+    expected = zenith_ebook.filename(meta)
+    return bool(expected and path.name == expected)
+
+
+def _named_ebook_copy(meta: Meta, source: Path, base_dir: str) -> str | None:
     filename = fallback_ebook_filename(meta)
     if not filename:
         return None
@@ -612,41 +628,53 @@ def _fallback_ebook_copy(meta: Meta, source: Path, base_dir: str) -> str | None:
         shutil.copy2(source, target / filename)
     except OSError as error:
         logger.warning(
-            f"[yellow]ZENITH: could not copy the ebook with the fallback name: {error}[/yellow]"
+            f"[yellow]ZENITH: could not copy the ebook with the wiki name: {error}[/yellow]"
         )
         return None
     logger.info(
-        f"[green]ZENITH: copied the ebook with the wiki filename: {target / filename}[/green]"
+        f"[green]ZENITH: named the ebook with the wiki filename: {target / filename}[/green]"
     )
     return str(target)
+
+
+fallback_ebook_copy = _named_ebook_copy
+_fallback_ebook_copy = _named_ebook_copy
 
 
 async def prepare_zenith_ebook(
     meta: Meta, base_dir: str, config: dict[str, Any]
 ) -> str | None:
-    if not should_prepare_zenith_ebook(meta, config):
+    if not _plain_ebook(meta):
         return None
     source = _ebook_source(meta)
     if source is None:
         return None
-    try:
-        return await _prepare_ebook_copy(meta, source, base_dir, config)
-    except (TimeoutError, OSError) as error:
-        logger.warning(
-            "[yellow]ZENITH: zentag is unavailable; copying the ebook with the "
-            f"wiki filename instead: {error}[/yellow]"
-        )
-        return _fallback_ebook_copy(meta, source, base_dir)
-    except (RuntimeError, ValueError, json.JSONDecodeError) as error:
-        text = str(error).casefold()
-        if any(marker in text for marker in _ZENTAG_INFRA_MARKERS):
+    prepared: str | None = None
+    if should_prepare_zenith_ebook(meta, config):
+        try:
+            prepared = await _prepare_ebook_copy(meta, source, base_dir, config)
+        except (TimeoutError, OSError) as error:
             logger.warning(
-                "[yellow]ZENITH: zentag dependency is missing; copying the ebook "
-                f"with the wiki filename instead: {error}[/yellow]"
+                "[yellow]ZENITH: zentag is unavailable; using the wiki filename "
+                f"instead: {error}[/yellow]"
             )
-            return _fallback_ebook_copy(meta, source, base_dir)
-        logger.warning(
-            "[yellow]ZENITH: automatic ebook preparation failed; keeping the "
-            f"original for other trackers: {error}[/yellow]"
-        )
-        return None
+        except (RuntimeError, ValueError, json.JSONDecodeError) as error:
+            text = str(error).casefold()
+            if any(marker in text for marker in _ZENTAG_INFRA_MARKERS):
+                logger.warning(
+                    "[yellow]ZENITH: zentag dependency is missing; using the wiki "
+                    f"filename instead: {error}[/yellow]"
+                )
+            else:
+                logger.warning(
+                    "[yellow]ZENITH: automatic ebook preparation failed; using the "
+                    f"wiki filename for the Zenith copy: {error}[/yellow]"
+                )
+    current = (
+        _prepared_ebook_file(prepared) if prepared is not None else source
+    )
+    if current is None:
+        current = source
+    if prepared is not None and _ebook_name_is_compliant(current, meta):
+        return prepared
+    return _named_ebook_copy(meta, current, base_dir)

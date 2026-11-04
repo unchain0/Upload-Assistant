@@ -204,7 +204,7 @@ def missing_fields(meta: Any) -> list[str]:
     ]
 
 
-def _retail(meta: Any) -> bool:
+def retail(meta: Any) -> bool:
     declared = f"{meta.manual_source or ''} {meta.source or ''}".casefold()
     if "retail" in declared:
         return True
@@ -241,7 +241,7 @@ def filename(meta: Any) -> str | None:
     if token:
         bracket.append(token)
     bracket.append(isbn)
-    if _retail(meta):
+    if retail(meta):
         bracket.append("Retail")
     parts.append(f"[{' '.join(bracket)}]")
     name = " ".join(parts)
