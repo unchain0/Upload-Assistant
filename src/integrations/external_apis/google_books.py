@@ -90,9 +90,16 @@ class GoogleBooksManager:
 
     @staticmethod
     def _add_edition(metadata: Metadata, volume_info: dict[str, Any]) -> None:
-        edition = volume_info.get("edition")
-        if isinstance(edition, str) and edition.strip():
-            metadata["edition"] = edition.strip()
+        from src.integrations.media.zenith_ebook import _edition_from_text
+
+        for key in ("edition", "title", "subtitle"):
+            value = volume_info.get(key)
+            if not isinstance(value, str):
+                continue
+            token = _edition_from_text(value)
+            if token:
+                metadata["edition"] = token
+                return
 
     @staticmethod
     def _add_year(metadata: Metadata, volume_info: dict[str, Any]) -> None:

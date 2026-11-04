@@ -431,9 +431,16 @@ class OpenLibraryManager:
         publisher = self._publisher_text(details.get("publishers"))
         if publisher:
             metadata["publisher"] = publisher
-        edition_name = details.get("edition_name")
-        if isinstance(edition_name, str) and edition_name.strip():
-            metadata["edition"] = edition_name.strip()
+        from src.integrations.media.zenith_ebook import _edition_from_text
+
+        for key in ("edition_name", "title", "subtitle"):
+            value = details.get(key)
+            if not isinstance(value, str):
+                continue
+            token = _edition_from_text(value)
+            if token:
+                metadata["edition"] = token
+                break
         self._add_year(metadata, details.get("publish_date"))
         thumbnail_url = book_data.get("thumbnail_url")
         if thumbnail_url:

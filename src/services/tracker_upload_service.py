@@ -135,17 +135,21 @@ def _zenith_isolated_meta(meta: Meta, prepared_path: str) -> Meta:
     prepared_meta.keep_folder = True
     if not prepared_meta.audiobook:
         release = Path(prepared_path)
-        if release.is_dir():
-            ebook_files = [
+        ebook_files = (
+            [release]
+            if release.is_file()
+            else [
                 candidate
                 for candidate in sorted(release.rglob("*"))
-                if candidate.is_file() and candidate.suffix.lower() in _EBOOK_SUFFIXES
+                if candidate.is_file()
+                and candidate.suffix.lower() in _EBOOK_SUFFIXES
             ]
-            if len(ebook_files) == 1:
-                prepared_meta.path = str(ebook_files[0])
-                prepared_meta.filelist = [str(ebook_files[0])]
-                prepared_meta.isdir = False
-                prepared_meta.keep_folder = False
+        )
+        if len(ebook_files) == 1:
+            prepared_meta.path = str(ebook_files[0])
+            prepared_meta.filelist = [str(ebook_files[0])]
+            prepared_meta.isdir = False
+            prepared_meta.keep_folder = False
     prepared_meta.allow_spaces = True
     # The early artifact can hash a copy while zentag is still finishing;
     # let the upload stage build the torrent from the final file.
