@@ -412,3 +412,37 @@ async def test_torrentleech_submit_cookie_upload_success_delegates(
     tracker._handle_cookie_upload_response.assert_awaited_once_with(
         item, response
     )
+
+
+@pytest.mark.asyncio
+async def test_torrentleech_validates_each_cookie_once_per_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    TorrentLeech._validated_sessions.clear()
+    cookies = httpx.Cookies({"sid": "1"})
+    tracker = _tracker()
+    tracker.cookie_validator.load_session_cookies = AsyncMock(
+        return_value=cookies
+    )  # type: ignore[method-assign]
+    validate = AsyncMock(return_value=True)
+    monkeypatch.setattr(tracker, "_validate_cookie_session", validate)
+
+    assert await tracker.login(_meta(), force=True)
+    upload_phase = _tracker()
+    upload_phase.cookie_validator.load_session_cookies = AsyncMock(
+        return_value=httpx.Cookies({"sid": "1"})
+    )  # type: ignore[method-assign]
+    monkeypatch.setattr(upload_phase, "_validate_cookie_session", validate)
+
+    assert await upload_phase.login(_meta(), force=True)
+    assert await upload_phase.login(_meta())
+    validate.assert_awaited_once_with(True)
+
+    changed = _tracker()
+    changed.cookie_validator.load_session_cookies = AsyncMock(
+        return_value=httpx.Cookies({"sid": "rotated"})
+    )  # type: ignore[method-assign]
+    monkeypatch.setattr(changed, "_validate_cookie_session", validate)
+    assert await changed.login(_meta())
+    assert validate.await_count == 2
+    TorrentLeech._validated_sessions.clear()

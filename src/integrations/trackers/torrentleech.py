@@ -1,7 +1,8 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import hashlib
 import platform
 import re
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import aiofiles
 import httpx
@@ -21,6 +22,9 @@ class TorrentLeech:
     """
     TORRENTLEECH (TL) is a Private Torrent Tracker for 0DAY / GENERAL. not here _ not scene
     """
+
+    # A second probe within the same run can be rejected as a new login.
+    _validated_sessions: ClassVar[set[str]] = set()
 
     auth_type = "other_api"
     tracker = "TORRENTLEECH"
@@ -71,7 +75,23 @@ class TorrentLeech:
         if cookie_jar is None:
             return False
         self.session.cookies = cast(Any, cookie_jar)
-        return await self._validate_cookie_session(force)
+        digest = self._cookie_digest(cookie_jar)
+        if digest in self._validated_sessions:
+            logger.debug(
+                f"{self.tracker}: [green]Reusing the session validated earlier in this run.[/green]"
+            )
+            return True
+        valid = await self._validate_cookie_session(force)
+        if valid:
+            self._validated_sessions.add(digest)
+        return valid
+
+    @staticmethod
+    def _cookie_digest(cookie_jar: httpx.Cookies) -> str:
+        pairs = sorted(
+            f"{cookie.name}={cookie.value}" for cookie in cookie_jar.jar
+        )
+        return hashlib.sha256(";".join(pairs).encode()).hexdigest()
 
     async def _validate_cookie_session(self, force: bool) -> bool:
         try:
