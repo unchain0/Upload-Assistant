@@ -556,12 +556,24 @@ _FILENAME_TRANSLATION = str.maketrans(
 )
 
 
+_LIBRARY_NOTE = re.compile(
+    r"\s*\([^)]*(?:library|biblioteca)[^)]*\)", re.IGNORECASE
+)
+_KEPT_SUBTITLE = re.compile(
+    r"^\s*(?:part|book|vol(?:ume)?|tome|#|\d)", re.IGNORECASE
+)
+
+
 def _without_book_subtitle(value: str) -> str:
-    """Zenith titles are the official title only; a long colon suffix is the subtitle."""
+    """Drop a colon description, keep series parts and 'The ...' titles."""
+    value = _LIBRARY_NOTE.sub("", value).strip()
     head, separator, tail = value.partition(":")
     if not separator:
         return value
-    if len(tail.split()) < 6:
+    words = re.split(r"[|]", tail, maxsplit=1)[0].split()
+    if not words or len(words) <= 2 or _KEPT_SUBTITLE.match(tail):
+        return value
+    if words[0].casefold() in {"the", "a", "an"} and len(words) >= 4:
         return value
     return head.strip()
 

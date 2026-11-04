@@ -145,3 +145,28 @@ def test_fallback_filename_drops_a_long_subtitle() -> None:
         "René Descartes - Meditations on First Philosophy (2008) "
         "[ENG 9780192806963].epub"
     )
+
+
+def test_surname_comma_author_is_inverted() -> None:
+    from src.domain_models.book_language import extract_first_author
+
+    assert extract_first_author("de Carvalho, Olavo") == "Olavo de Carvalho"
+    assert extract_first_author("Rowling, J.K.") == "J.K. Rowling"
+
+
+def test_description_after_colon_is_removed_and_series_titles_stay() -> None:
+    from src.integrations.media.zentag import _without_book_subtitle
+
+    assert _without_book_subtitle(
+        "A Nova Era e a Revolução Cultural: Fritjof Capra & Antonio Gramsci"
+    ) == "A Nova Era e a Revolução Cultural"
+    assert (
+        _without_book_subtitle("Algorithms: Part II") == "Algorithms: Part II"
+    )
+    assert _without_book_subtitle(
+        "Code: The Hidden Language of Computer Hardware and Software"
+    ) == "Code: The Hidden Language of Computer Hardware and Software"
+    assert (
+        _without_book_subtitle("Algorithms: Part II (Fahad Batla's Library)")
+        == "Algorithms: Part II"
+    )
