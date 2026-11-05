@@ -125,6 +125,18 @@ async def _is_black_frame(image_path: str | Path) -> bool:
     return mean_luma < BLACK_FRAME_MEAN_LUMA
 
 
+def _page_is_blank(image_path: str | Path) -> bool:
+    """Return whether a rendered page is a uniform blank sheet."""
+    from PIL import Image
+
+    try:
+        with Image.open(image_path) as image:
+            low, high = cast(tuple[int, int], image.convert("L").getextrema())
+    except OSError, ValueError:
+        return False
+    return low >= 250 or high <= 5
+
+
 def _should_cleanup_after_capture(
     meta: Meta, cleanup_after_capture: bool
 ) -> bool:
@@ -3738,19 +3750,29 @@ async def _generate_document_screenshots(
             page = document[index]
             reader = getattr(page, "get_text", None)
             page_texts.append(str(reader("text") or "") if reader else "")
-        screenshots = [
-            await _render_document_page(
+        screenshots: list[str] = []
+        blank_pages: list[str] = []
+        for candidate_index, page_number in enumerate(
+            _priority_document_pages(total_pages, page_texts, total_pages)
+        ):
+            if len(screenshots) >= num_screens:
+                break
+            rendered = await _render_document_page(
                 document,
                 fitz_module,
                 page_number,
-                f"{sanitized_filename}-{position}",
+                f"{sanitized_filename}-{candidate_index}",
                 output_dir,
                 poster_dir,
             )
-            for position, page_number in enumerate(
-                _priority_document_pages(total_pages, page_texts, num_screens)
-            )
-        ]
+            if await asyncio.to_thread(_page_is_blank, rendered):
+                blank_pages.append(rendered)
+            else:
+                screenshots.append(rendered)
+        needed = max(0, num_screens - len(screenshots))
+        screenshots.extend(blank_pages[:needed])
+        for unused in blank_pages[needed:]:
+            Path(unused).unlink(missing_ok=True)
         await _ensure_document_artwork(
             document,
             fitz_module,
