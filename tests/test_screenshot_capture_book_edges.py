@@ -1347,6 +1347,44 @@ def test_pdf_does_not_receive_epub_layout() -> None:
     _layout_ebook_document(FixedLayout(), "pdf")
 
 
+def test_book_screenshots_skip_a_blank_page(tmp_path: Path) -> None:
+    import asyncio
+
+    import fitz
+    from PIL import Image
+
+    from src.domain_models.release import Meta
+    from src.integrations.media import screenshot_capture as capture
+
+    pdf = tmp_path / "blank-page.pdf"
+    document = fitz.open()
+    for index in range(5):
+        page = document.new_page()
+        if index != 2:
+            page.insert_text((50, 50), f"Content page {index}")
+    document.save(pdf)
+    document.close()
+    meta = Meta(
+        category="BOOK",
+        base_dir=str(tmp_path),
+        uuid="blank-page-book",
+        screens=4,
+        artwork_path="",
+    )
+
+    images = asyncio.run(
+        capture._book_screenshot_result(
+            str(pdf), pdf.name, meta.uuid, meta.base_dir, meta, 4
+        )
+    )
+
+    assert len(images) >= 3
+    for image in images:
+        with Image.open(image) as rendered:
+            low, high = rendered.convert("L").getextrema()
+        assert low < 250 and high > 5
+
+
 def test_book_result_replaces_previous_screenshot_generation(
     tmp_path: Path,
 ) -> None:
