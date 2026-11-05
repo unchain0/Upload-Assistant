@@ -630,6 +630,23 @@ def test_lookup_series_marker_and_uppercase_author_do_not_reach_the_name() -> No
     assert zenith_ebook.series(meta) == ""
 
 
+def test_one_letter_series_with_a_plain_indexed_title_survives() -> None:
+    meta = Meta(
+        category="BOOK",
+        type="PDF",
+        author="Ada Author",
+        book_author="Ada Author",
+        title="A 1,000 Piece Puzzle",
+        year=2024,
+        book_language_iso="ENG",
+        isbn="9780000000003",
+        book_series="A",
+        book_series_index="1",
+        path="A 1,000 Piece Puzzle.pdf",
+    )
+    assert zenith_ebook.series(meta) == "A #1"
+
+
 def test_lookup_series_letter_marker_with_index_does_not_reach_the_name() -> None:
     meta = Meta(
         category="BOOK",
