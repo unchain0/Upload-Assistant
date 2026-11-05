@@ -1547,9 +1547,16 @@ def _provider_field_blocked(
     return _prior_provider_has_field(prior, key)
 
 
+def _title_case_all_caps(value: Any) -> Any:
+    text = str(value or "")
+    return text.title() if text.isupper() else value
+
+
 def _apply_provider_value(
     meta: Meta, key: str, value: Any, data: dict[str, Any]
 ) -> None:
+    if key == "author":
+        value = _title_case_all_caps(value)
     meta[key] = int(value) if key == "year" else value
     if key == "year" and "search_year" not in data:
         meta.search_year = int(value)
@@ -1568,7 +1575,7 @@ def _apply_provider_metadata(
         if not value:
             continue
         if key == "author" and not ctx.meta.get("lookup_author"):
-            ctx.meta.update({"lookup_author": value})
+            ctx.meta.update({"lookup_author": _title_case_all_caps(value)})
         if _provider_field_blocked(
             ctx, key, prior, artwork_may_override=artwork_may_override
         ):
