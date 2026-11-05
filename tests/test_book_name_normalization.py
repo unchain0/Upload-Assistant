@@ -74,3 +74,49 @@ def test_zentag_fallback_name_uses_the_series_guard() -> None:
     assert fallback_ebook_filename(meta) == (
         "Mark J. Price - C# 9 and .NET 5 (2020) [ENG 5th 9781800568105].pdf"
     )
+
+
+def _series_meta(series: str) -> object:
+    from src.domain_models.release import Meta
+
+    return Meta(
+        category="BOOK",
+        type="PDF",
+        author="Mark J. Price",
+        book_author="Mark J. Price",
+        title="C# 9 and .NET 5",
+        year=2020,
+        book_language_iso="ENG",
+        isbn="9781800568105",
+        book_series=series,
+        manual_edition="5th",
+        path="x.pdf",
+    )
+
+
+def test_naming_meta_drops_only_rejected_series() -> None:
+    from src.integrations.media.zentag import _naming_meta
+
+    rejected = _naming_meta(_series_meta("C #9"))
+    kept = _naming_meta(_series_meta("Dune"))
+    assert rejected.book_series == ""
+    assert kept.book_series == "Dune"
+
+
+def test_zentag_copy_name_has_no_rejected_series(tmp_path) -> None:
+    from pathlib import Path
+
+    from src.integrations.media.zentag import _named_ebook_copy
+
+    source = tmp_path / "book.pdf"
+    source.write_bytes(b"book")
+    meta = _series_meta("C #9")
+    meta.uuid = "00000000-0000-7000-8000-000000000123"
+    meta.path = str(source)
+
+    copied = _named_ebook_copy(meta, source, str(tmp_path))
+
+    assert copied is not None
+    assert Path(copied).name == (
+        "Mark J. Price - C# 9 and .NET 5 (2020) [ENG 5th 9781800568105].pdf"
+    )

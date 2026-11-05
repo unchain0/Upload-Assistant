@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import os
 import re
@@ -615,8 +616,31 @@ def _ebook_name_is_compliant(path: Path, meta: Meta) -> bool:
     return bool(expected and path.name == expected)
 
 
+def _naming_meta(meta: Meta) -> Meta:
+    """Drop a series the naming guard rejects, whatever built the name."""
+    from src.integrations.media import zenith_ebook
+
+    if not meta.book_series or zenith_ebook.series(meta):
+        return meta
+    clean = copy.copy(meta)
+    clean.book_series = ""
+    clean.book_series_index = ""
+    return clean
+
+
 def _named_ebook_copy(meta: Meta, source: Path, base_dir: str) -> str | None:
-    filename = fallback_ebook_filename(meta)
+    from src.integrations.media import zenith_ebook
+
+    naming = _naming_meta(meta)
+    if meta.book_series and not naming.book_series:
+        logger.info(
+            "[cyan]ZENITH: rejected series %r (index %r) via %s; title %r[/cyan]",
+            meta.book_series,
+            meta.book_series_index,
+            zenith_ebook.__file__,
+            meta.title,
+        )
+    filename = fallback_ebook_filename(naming)
     if not filename:
         return None
     try:
