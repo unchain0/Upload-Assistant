@@ -630,6 +630,42 @@ def test_lookup_series_marker_and_uppercase_author_do_not_reach_the_name() -> No
     assert zenith_ebook.series(meta) == ""
 
 
+def test_one_letter_series_with_a_plain_indexed_title_survives() -> None:
+    meta = Meta(
+        category="BOOK",
+        type="PDF",
+        author="Ada Author",
+        book_author="Ada Author",
+        title="A 1,000 Piece Puzzle",
+        year=2024,
+        book_language_iso="ENG",
+        isbn="9780000000003",
+        book_series="A",
+        book_series_index="1",
+        path="A 1,000 Piece Puzzle.pdf",
+    )
+    assert zenith_ebook.series(meta) == "A #1"
+
+
+def test_lookup_series_letter_marker_with_index_does_not_reach_the_name() -> None:
+    meta = Meta(
+        category="BOOK",
+        type="PDF",
+        author="Mark J. Price",
+        book_author="Mark J. Price",
+        title="C# 9 and .NET 5",
+        book_title="C# 9 and .NET 5",
+        year=2020,
+        book_language_iso="ENG",
+        isbn="9781800568105",
+        book_series="C",
+        book_series_index="9",
+        manual_edition="5th",
+        path="Mark J. Price - C# 9 and .NET 5.pdf",
+    )
+    assert zenith_ebook.series(meta) == ""
+
+
 def test_lookup_author_is_not_left_in_capitals() -> None:
     from src.services.book_preparation import _apply_provider_value
 
