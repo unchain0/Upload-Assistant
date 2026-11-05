@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from src.domain_models.release import Meta
+from src.integrations.media import zenith_ebook
 from src.integrations.media.zentag import fallback_ebook_filename
 from src.integrations.trackers.UNIT3D.znth import Zenith
 
@@ -545,3 +546,64 @@ def test_single_file_with_a_non_wiki_name_is_rejected(tmp_path: Path) -> None:
         filelist=[str(book)],
     )
     assert TRACKER._book_folder_policy(meta, [str(book)], defer=False) is False
+
+
+def test_technical_series_marker_does_not_repeat_the_title() -> None:
+    source = (
+        "Mark J. Price - C#9 and .NET 5 - "
+        "Modern Cross-Platform Development_5e.pdf"
+    )
+    meta = Meta(
+        category="BOOK",
+        type="PDF",
+        author="MARK J. PRICE",
+        book_author="MARK J. PRICE",
+        title="C# 9 and .NET 5",
+        year=2020,
+        book_language_iso="ENG",
+        isbn="9781800568105",
+        book_series="C#9",
+        manual_edition="5th",
+        basename_no_ext=source.removesuffix(".pdf"),
+        path=source,
+    )
+    assert TRACKER._book_release_name(meta) == (
+        "Mark J. Price - C# 9 and .NET 5 2020 ENG 5th PDF"
+    )
+    assert zenith_ebook.filename(meta) == (
+        "Mark J. Price - C# 9 and .NET 5 "
+        "(2020) [ENG 5th 9781800568105].pdf"
+    )
+
+
+def test_numbered_series_that_prefixes_the_title_survives() -> None:
+    meta = Meta(
+        category="BOOK",
+        type="PDF",
+        author="Ada Author",
+        book_author="Ada Author",
+        title="Series 2 - Book One",
+        year=2024,
+        book_language_iso="ENG",
+        isbn="9780000000002",
+        book_series="Series 2",
+        path="Series 2 - Book One.pdf",
+    )
+    assert zenith_ebook.series(meta) == "Series 2"
+
+
+def test_real_series_survives_the_title_prefix_check() -> None:
+    meta = Meta(
+        category="BOOK",
+        type="PDF",
+        author="Frank Herbert",
+        book_author="Frank Herbert",
+        title="Dune Messiah",
+        year=1969,
+        book_language_iso="ENG",
+        isbn="9780593098233",
+        book_series="Dune",
+        book_series_index="2",
+        path="Dune Messiah.pdf",
+    )
+    assert zenith_ebook.series(meta) == "Dune #2"
