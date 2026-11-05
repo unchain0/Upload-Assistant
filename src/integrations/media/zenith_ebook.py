@@ -206,6 +206,9 @@ def language(meta: Any) -> str:
     return re.sub(r"[^A-Z]", "", str(meta.book_language_iso or "").upper())[:3]
 
 
+_TECHNICAL_MARKER = re.compile(r"[A-Za-z][#+]|[#+]{1,2}\d")
+
+
 def _series_repeats_title(name: str, meta: Any) -> bool:
     """A technical marker such as C#9 is title text, not a series name."""
     series_tokens = _tokens(name)
@@ -216,7 +219,7 @@ def _series_repeats_title(name: str, meta: Any) -> bool:
         return True
     if title_tokens[: len(series_tokens)] != series_tokens:
         return False
-    return any(character.isdigit() for character in name) or "#" in name
+    return bool(_TECHNICAL_MARKER.search(name))
 
 
 def series(meta: Any) -> str:

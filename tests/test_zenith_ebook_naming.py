@@ -576,6 +576,22 @@ def test_technical_series_marker_does_not_repeat_the_title() -> None:
     )
 
 
+def test_numbered_series_that_prefixes_the_title_survives() -> None:
+    meta = Meta(
+        category="BOOK",
+        type="PDF",
+        author="Ada Author",
+        book_author="Ada Author",
+        title="Series 2 - Book One",
+        year=2024,
+        book_language_iso="ENG",
+        isbn="9780000000002",
+        book_series="Series 2",
+        path="Series 2 - Book One.pdf",
+    )
+    assert zenith_ebook.series(meta) == "Series 2"
+
+
 def test_real_series_survives_the_title_prefix_check() -> None:
     meta = Meta(
         category="BOOK",
