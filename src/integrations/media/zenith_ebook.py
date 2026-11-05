@@ -232,6 +232,15 @@ def _series_repeats_title(name: str, meta: Any) -> bool:
     marker = _WHITESPACE.sub("", unicodedata.normalize("NFKC", name))
     if _TECHNICAL_MARKER.search(marker):
         return True
+    index_tokens = _tokens(_text(meta.book_series_index))
+    series_with_index = series_tokens + index_tokens
+    if (
+        len(series_tokens) == 1
+        and index_tokens
+        and len(marker) == 1
+        and title_tokens[: len(series_with_index)] == series_with_index
+    ):
+        return True
     return (
         len(series_tokens) == 2
         and len(series_tokens[0]) == 1
