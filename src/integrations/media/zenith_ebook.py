@@ -215,7 +215,7 @@ _SERIES_MARKER_ONLY = re.compile(
 
 def _is_real_series(name: str) -> bool:
     """Reject lookup values such as C #9, C#, C++ or a bare number."""
-    compact = _WHITESPACE.sub("", name)
+    compact = _WHITESPACE.sub("", unicodedata.normalize("NFKC", name))
     return bool(compact) and not _SERIES_MARKER_ONLY.fullmatch(compact)
 
 
@@ -229,8 +229,14 @@ def _series_repeats_title(name: str, meta: Any) -> bool:
         return True
     if title_tokens[: len(series_tokens)] != series_tokens:
         return False
-    marker = _WHITESPACE.sub("", name)
-    return bool(_TECHNICAL_MARKER.search(marker))
+    marker = _WHITESPACE.sub("", unicodedata.normalize("NFKC", name))
+    if _TECHNICAL_MARKER.search(marker):
+        return True
+    return (
+        len(series_tokens) == 2
+        and len(series_tokens[0]) == 1
+        and series_tokens[1].isdigit()
+    )
 
 
 def series(meta: Any) -> str:
