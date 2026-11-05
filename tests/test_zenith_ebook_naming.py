@@ -607,3 +607,32 @@ def test_real_series_survives_the_title_prefix_check() -> None:
         path="Dune Messiah.pdf",
     )
     assert zenith_ebook.series(meta) == "Dune #2"
+
+
+def test_lookup_series_marker_and_uppercase_author_do_not_reach_the_name() -> None:
+    meta = Meta(
+        category="BOOK",
+        type="PDF",
+        author="Mark J. Price",
+        book_author="Mark J. Price",
+        title="C# 9 and .NET 5",
+        book_title="C# 9 and .NET 5",
+        year=2020,
+        book_language_iso="ENG",
+        isbn="9781800568105",
+        book_series="C #9",
+        manual_edition="5th",
+        path="Mark J. Price - C#9 and .NET 5.pdf",
+    )
+    assert TRACKER._book_release_name(meta) == (
+        "Mark J. Price - C# 9 and .NET 5 2020 ENG 5th PDF"
+    )
+    assert zenith_ebook.series(meta) == ""
+
+
+def test_lookup_author_is_not_left_in_capitals() -> None:
+    from src.services.book_preparation import _apply_provider_value
+
+    meta = Meta(category="BOOK")
+    _apply_provider_value(meta, "author", "MARK J. PRICE", {})
+    assert meta.author == "Mark J. Price"

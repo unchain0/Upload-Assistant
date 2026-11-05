@@ -206,7 +206,17 @@ def language(meta: Any) -> str:
     return re.sub(r"[^A-Z]", "", str(meta.book_language_iso or "").upper())[:3]
 
 
+_WHITESPACE = re.compile(r"\s+")
 _TECHNICAL_MARKER = re.compile(r"[A-Za-z][#+]|[#+]{1,2}\d")
+_SERIES_MARKER_ONLY = re.compile(
+    r"^(?:[A-Za-z][#+]{1,2}\d*|[#+]{1,2}\d+|\d+)$"
+)
+
+
+def _is_real_series(name: str) -> bool:
+    """Reject lookup values such as C #9, C#, C++ or a bare number."""
+    compact = _WHITESPACE.sub("", name)
+    return bool(compact) and not _SERIES_MARKER_ONLY.fullmatch(compact)
 
 
 def _series_repeats_title(name: str, meta: Any) -> bool:
@@ -219,13 +229,14 @@ def _series_repeats_title(name: str, meta: Any) -> bool:
         return True
     if title_tokens[: len(series_tokens)] != series_tokens:
         return False
-    return bool(_TECHNICAL_MARKER.search(name))
+    marker = _WHITESPACE.sub("", name)
+    return bool(_TECHNICAL_MARKER.search(marker))
 
 
 def series(meta: Any) -> str:
     name = _text(meta.book_series)
     index = _text(meta.book_series_index)
-    if not name or _series_repeats_title(name, meta):
+    if not name or not _is_real_series(name) or _series_repeats_title(name, meta):
         return ""
     return f"{name} #{index}" if index else name
 
