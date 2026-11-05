@@ -20,6 +20,23 @@ _SPACED_HASH = re.compile(r"\b([A-Za-z])\s+#(?=\d)")
 _SEPARATOR = re.compile(r"\s+[-\u2013\u2014]\s+")
 _WHITESPACE = re.compile(r"\s+")
 _WORD = re.compile(r"[^\W_]+(?:['-][^\W_]+)*", re.UNICODE)
+_REPEATED_PUNCTUATION = re.compile(r"([.,;:!?])(?:\s*\1)+")
+
+
+
+def collapse_repeated_punctuation(value: str) -> str:
+    """'Joseph T.. Salerno' becomes 'Joseph T. Salerno'."""
+    return _REPEATED_PUNCTUATION.sub(r"\1", value)
+
+
+_JOINED_SUBTITLE = re.compile(
+    r"(?<![A-Za-z])(?P<left>[A-Z][a-z]{2,})(?=(?:The|A|An)\b)"
+)
+
+
+def split_joined_words(value: str) -> str:
+    """Restore a lost subtitle separator: 'DemocracyThe God' -> 'Democracy: The God'."""
+    return _JOINED_SUBTITLE.sub(r"\g<left>: ", value)
 
 
 def _folded(value: str) -> str:
@@ -75,6 +92,7 @@ def canonical_book_author(meta: Any) -> str:
         text = _safe_text(value)
         if text:
             text = _WHITESPACE.sub(" ", text.replace("_", " ")).strip()
+            text = collapse_repeated_punctuation(text)
             if any(character.isalpha() for character in text) and text.isupper():
                 text = text.title()
             text = _dedupe_author_variants(text)
@@ -187,6 +205,8 @@ def clean_book_title(title: Any, author: str = "") -> str:
     text = text.replace("_", " ")
     text = _LIBRARY_NOTE.sub("", text)
     text = _SPACED_HASH.sub(r"\1#", text)
+    text = split_joined_words(text)
+    text = collapse_repeated_punctuation(text)
     text = _WHITESPACE.sub(" ", text).strip(" -")
     text = _strip_author_segments(text, author)
     text = _normalize_edition(text)

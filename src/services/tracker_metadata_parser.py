@@ -18,6 +18,7 @@ from src.engines.tracker_description_policy import (
     score_release_name,
 )
 from src.integrations.external_apis.btn import BtnIdManager
+from src.integrations.filesystem.content_digest import file_content_digest
 from src.integrations.filesystem.temp_paths import screenshots_dir
 from src.integrations.mapping.value_coercion import to_int
 from src.integrations.media.artwork import (
@@ -152,21 +153,32 @@ def _log_duplicate_summary(
     )
 
 
+def _image_content_key(image: ImageDict) -> str:
+    local_path = cast(str | None, image.get("local_file_path"))
+    if local_path:
+        try:
+            return f"sha256:{file_content_digest(local_path)}"
+        except OSError:
+            pass
+    return f"url:{image.get('raw_url', '')}"
+
+
 def _unique_images(
     imagelist: Sequence[ImageDict], meta: Meta
 ) -> list[ImageDict]:
-    seen_urls: set[str] = set()
+    seen_keys: set[str] = set()
     unique: list[ImageDict] = []
     for image in imagelist:
         url = cast(str | None, image.get("raw_url"))
         if not url:
             continue
-        if url in seen_urls:
+        key = _image_content_key(image)
+        if key in seen_keys:
             logger.debug(
-                f"[yellow]Removing duplicate image URL: {url}[/yellow]"
+                f"[yellow]Removing duplicate image content: {url}[/yellow]"
             )
             continue
-        seen_urls.add(url)
+        seen_keys.add(key)
         unique.append(image)
     _log_duplicate_summary(meta, len(unique), len(imagelist))
     return unique
@@ -292,7 +304,7 @@ async def _gather_valid_images(tasks: Sequence[Any]) -> list[ImageDict]:
 async def check_images_concurrently(
     imagelist: Sequence[ImageDict], meta: Meta
 ) -> list[ImageDict]:
-    unique_images = _unique_images(imagelist, meta)
+    unique_images = await asyncio.to_thread(_unique_images, imagelist, meta)
     expected_height = _expected_image_height(meta)
     if expected_height is None:
         return []
