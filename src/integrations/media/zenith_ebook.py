@@ -206,10 +206,23 @@ def language(meta: Any) -> str:
     return re.sub(r"[^A-Z]", "", str(meta.book_language_iso or "").upper())[:3]
 
 
+def _series_repeats_title(name: str, meta: Any) -> bool:
+    """A technical marker such as C#9 is title text, not a series name."""
+    series_tokens = _tokens(name)
+    title_tokens = _tokens(title(meta))
+    if not series_tokens or not title_tokens:
+        return False
+    if series_tokens == title_tokens:
+        return True
+    if title_tokens[: len(series_tokens)] != series_tokens:
+        return False
+    return any(character.isdigit() for character in name) or "#" in name
+
+
 def series(meta: Any) -> str:
     name = _text(meta.book_series)
     index = _text(meta.book_series_index)
-    if not name:
+    if not name or _series_repeats_title(name, meta):
         return ""
     return f"{name} #{index}" if index else name
 
