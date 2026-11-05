@@ -304,7 +304,7 @@ async def _gather_valid_images(tasks: Sequence[Any]) -> list[ImageDict]:
 async def check_images_concurrently(
     imagelist: Sequence[ImageDict], meta: Meta
 ) -> list[ImageDict]:
-    unique_images = _unique_images(imagelist, meta)
+    unique_images = await asyncio.to_thread(_unique_images, imagelist, meta)
     expected_height = _expected_image_height(meta)
     if expected_height is None:
         return []

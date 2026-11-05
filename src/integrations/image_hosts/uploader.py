@@ -1717,7 +1717,7 @@ async def _upload_source_files(
     files = await _main_screenshot_files(meta)
     files = _filter_menu_screenshots(meta, files)
     files.sort(key=_numeric_screenshot_suffix)
-    files = unique_by_content(files)
+    files = await asyncio.to_thread(unique_by_content, files)
     files = _exclude_uploaded_source_files(files, return_dict)
     logger.debug(f"image globs (sorted): {files}")
     return files, _existing_hosted_image_count(meta.image_list), False
