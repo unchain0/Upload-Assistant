@@ -15,6 +15,7 @@ import httpx
 import pyimgbox
 
 from src.domain_models.release import Meta
+from src.integrations.filesystem.content_digest import unique_by_content
 from src.integrations.filesystem.screenshot_manifest import (
     files as manifest_files,
 )
@@ -1716,6 +1717,7 @@ async def _upload_source_files(
     files = await _main_screenshot_files(meta)
     files = _filter_menu_screenshots(meta, files)
     files.sort(key=_numeric_screenshot_suffix)
+    files = unique_by_content(files)
     files = _exclude_uploaded_source_files(files, return_dict)
     logger.debug(f"image globs (sorted): {files}")
     return files, _existing_hosted_image_count(meta.image_list), False
