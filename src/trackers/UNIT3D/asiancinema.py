@@ -1,0 +1,193 @@
+# Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+from typing import Any
+
+from src.console import logger
+from src.meta import Meta
+from src.trackers.common import Common
+from src.trackers.UNIT3D import UNIT3D
+
+
+class AsianCinema(UNIT3D):
+    """
+    AsianCinema is a Private Tracker for ASIAN MOVIES / TV / MUSIC
+    """
+
+    tracker = "ASIANCINEMA"
+    display_name = "AsianCinema"
+    allows_bloated_audio = True
+    source_flag = "AsianCinema"
+    base_url = "https://eiga.moi"
+    banned_groups: tuple[str, ...] = ()
+    id_url = f"{base_url}/api/torrents/"
+    upload_url = f"{base_url}/api/torrents/upload"
+    requests_url = f"{base_url}/api/requests/filter"
+    search_url = f"{base_url}/api/torrents/filter"
+    torrent_url = f"{base_url}/torrents/"
+    supported_categories = ("TV", "MOVIE", "MUSIC")
+    tracker_urls = ("https://eiga.moi",)
+
+    def __init__(self, config: dict[str, Any]):
+        super().__init__(config, tracker_name="ASIANCINEMA")
+        self.config = config
+        self.common = Common(config)
+
+    async def get_category_id(self, meta: Meta, category: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+        category_id = {"MOVIE": "1", "TV": "2", "MUSIC": "3"}
+        if mapping_only:
+            return category_id
+        if reverse:
+            return {v: k for k, v in category_id.items()}
+        return {"category_id": category_id.get(category or meta.category, "0")}
+
+    async def get_type_id(self, meta: Meta, type: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+        type_id = {
+            "DISC": "1",
+            "REMUX": "7",
+            "WEBDL": "9",
+            "SDTV": "13",
+            "FLAC": "15",
+            "HDTV": "17",
+            "UHDTV": "19",
+        }
+        if mapping_only:
+            return type_id
+        if reverse:
+            return {v: k for k, v in type_id.items()}
+
+        resolved_type = type or meta.type or ""
+        if not type and meta.category == "MUSIC":
+            resolved_type = meta.format or resolved_type
+        elif not type and resolved_type == "HDTV" and meta.source in ("SDTV", "UHDTV"):
+            resolved_type = meta.source
+        return {"type_id": type_id.get(resolved_type, "0")}
+
+    async def get_additional_checks(self, meta: Meta) -> bool:
+        asia = [
+            "AE",
+            "AF",
+            "AM",
+            "AZ",
+            "BD",
+            "BH",
+            "BN",
+            "BT",
+            "CN",
+            "CY",
+            "GE",
+            "HK",
+            "ID",
+            "IL",
+            "IN",
+            "IQ",
+            "IR",
+            "JO",
+            "JP",
+            "KG",
+            "KH",
+            "KP",
+            "KR",
+            "KW",
+            "KZ",
+            "LA",
+            "LB",
+            "LK",
+            "MM",
+            "MN",
+            "MO",
+            "MV",
+            "MY",
+            "NP",
+            "OM",
+            "PH",
+            "PK",
+            "PS",
+            "QA",
+            "SA",
+            "SG",
+            "SY",
+            "TH",
+            "TJ",
+            "TL",
+            "TM",
+            "TR",
+            "TW",
+            "UZ",
+            "VN",
+            "YE",
+        ]
+
+        origin_country = meta.origin_country
+        if origin_country and any(country not in asia for country in origin_country):
+            logger.info(f"{self.tracker}: Origin country is not Asian, skipping upload...")
+            return False
+
+        return True
+
+    async def get_resolution_id(self, meta: Meta, resolution: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+        resolution_id = {
+            "2160p": "1",
+            "1080p": "2",
+            "1080i": "2",
+            "720p": "3",
+            "576p": "4",
+            "576i": "4",
+            "480p": "5",
+            "480i": "5",
+        }
+        if mapping_only:
+            return resolution_id
+        if reverse:
+            return {v: k for k, v in resolution_id.items()}
+        if resolution:
+            return {"resolution_id": resolution_id.get(resolution, "6")}
+        meta_resolution = meta.resolution
+        resolved_id = resolution_id.get(meta_resolution, "6")
+        return {"resolution_id": resolved_id}
+
+    def get_subs_tag(self, meta: Meta) -> str:
+        subs = meta.subtitle_languages
+        if not subs:
+            return " [No subs]"
+        if "English" in subs:
+            return ""
+        if len(subs) > 1:
+            return " [No Eng subs]"
+        return f" [{subs[0][:3]} subs only]"
+
+    async def get_keywords(self, meta: Meta, max_terms: int | None = 10) -> dict[str, str]:
+        return await super().get_keywords(meta, max_terms)
+
+    async def get_name(self, meta: Meta) -> dict[str, str]:
+        if meta.manual_name is not None:
+            return {"name": meta.manual_name.strip()}
+
+        name: str = meta.name
+        aka: str = meta.aka
+        original_title: str = meta.original_title
+        audio: str = meta.audio
+        source: str = meta.source or ""
+        is_disc: str = meta.is_disc
+        resolution: str = meta.resolution
+        if aka != "":
+            # ugly fix to remove the extra space in the title
+            aka = aka + " "
+            name = name.replace(aka, f" / {original_title} {chr(int('202A', 16))}")
+        elif aka == "":
+            if meta.title != original_title:
+                # name = f'{name[:name.find(year)]}/ {original_title} {chr(int("202A", 16))}{name[name.find(year):]}'
+                name = name.replace(meta.title, f"{meta.title} / {original_title} {chr(int('202A', 16))}")
+        if "AAC" in audio:
+            name = name.replace(audio.strip().replace("  ", " "), audio.replace("AAC ", "AAC"))
+        name = name.replace("DD+ ", "DD+")
+        name = name.replace("UHD BluRay REMUX", "Remux")
+        name = name.replace("BluRay REMUX", "Remux")
+        name = name.replace("H.265", "HEVC")
+        name = name.replace(" Atmos", "")
+        if is_disc == "DVD":
+            name = name.replace(f"{source} DVD5", f"{resolution} DVD {source}")
+            name = name.replace(f"{source} DVD9", f"{resolution} DVD {source}")
+            if audio == meta.channels:
+                name = name.replace(f"{audio}", f"MPEG {audio}")
+
+        name = name + self.get_subs_tag(meta)
+        return {"name": name}
