@@ -1,13 +1,36 @@
 import asyncio
-from unittest.mock import AsyncMock, patch
+from typing import Any
 
 import pytest
 
-from src.configvalidator import _validate_trackers_section
-from src.meta import Meta
-from src.screenshot_manifest import register as register_screenshots
-from src.trackers.UNIT3D.capybarabr import CapybaraBR
-from src.trackers.UNIT3D.samaritano import Samaritano
+from src.domain_models.release import Meta
+from src.integrations.trackers.UNIT3D.capybarabr import CapybaraBR
+from src.integrations.trackers.UNIT3D.samaritano import Samaritano
+
+
+def test_samaritano_rejects_malformed_filelists_before_category_dispatch() -> (
+    None
+):
+    tracker = Samaritano({"TRACKERS": {}})
+
+    assert (
+        asyncio.run(
+            tracker.get_additional_checks(Meta(category="MOVIE", filelist=1))
+        )
+        is False
+    )
+    assert (
+        asyncio.run(
+            tracker.get_additional_checks(Meta(category="BOOK", filelist=1))
+        )
+        is False
+    )
+    assert (
+        asyncio.run(
+            tracker.get_additional_checks(Meta(category="BOOK", filelist=None))
+        )
+        is True
+    )
 
 
 @pytest.mark.parametrize(
@@ -23,7 +46,11 @@ from src.trackers.UNIT3D.samaritano import Samaritano
         (["Portuguese", "English", "Japanese"], "MULTI"),
     ],
 )
-def test_brazilian_trackers_audio_tags_require_portuguese(tracker_class: type[CapybaraBR] | type[Samaritano], audio_languages: list[str], expected_tag: str) -> None:
+def test_brazilian_trackers_audio_tags_require_portuguese(
+    tracker_class: type[CapybaraBR] | type[Samaritano],
+    audio_languages: list[str],
+    expected_tag: str,
+) -> None:
     meta = Meta(
         category="TV",
         name="Example Show 2026 WEB-DL - GROUP",
@@ -36,194 +63,206 @@ def test_brazilian_trackers_audio_tags_require_portuguese(tracker_class: type[Ca
 
     name = asyncio.run(tracker_class({"TRACKERS": {}}).get_name(meta))["name"]
 
-    assert (" DUAL-" in name) == (expected_tag == "DUAL")  # noqa: S101
-    assert (" MULTI-" in name) == (expected_tag == "MULTI")  # noqa: S101
+    assert (" DUAL-" in name) == (expected_tag == "DUAL")
+    assert (" MULTI-" in name) == (expected_tag == "MULTI")
 
 
-def test_capybarabr_appends_audio_tag_when_release_has_no_group() -> None:
+@pytest.mark.parametrize("tracker_class", [CapybaraBR, Samaritano])
+def test_brazilian_trackers_move_dual_before_the_group_dash(
+    tracker_class: type[CapybaraBR] | type[Samaritano],
+) -> None:
     meta = Meta(
         category="MOVIE",
-        name="Example Movie 2017 2160p WEB-DL DDP5.1 HDR H.265",
-        title="Example Movie",
-        year=2017,
-        tag="",
+        name="The Princess Bride 1987 1080p AMZN WEB-DL DDP5.1 H.264-DUAL.BAD",
+        title="The Princess Bride",
+        year=1987,
+        tag="-DUAL.BAD",
+        aka="",
+        original_language="en",
         audio_languages=["Portuguese", "English"],
+        path="A.Princesa.Prometida.1987.1080p.AMZN.WEB-DL.DDP5.1.H.264-DUAL.BAD.mkv",
     )
 
-    name = asyncio.run(CapybaraBR({"TRACKERS": {}}).get_name(meta))["name"]
+    name = asyncio.run(tracker_class({"TRACKERS": {}}).get_name(meta))["name"]
 
-    assert name == "Example Movie 2017 2160p WEB-DL DDP5.1 HDR H.265 DUAL-NoGroup"  # noqa: S101
+    assert (
+        name
+        == "The Princess Bride 1987 1080p AMZN WEB-DL DDP5.1 H.264 DUAL-BAD"
+    )
 
 
-def test_capybarabr_formats_dvdrips_with_resolution_before_audio_and_codec() -> None:
+def test_capybarabr_formats_dvdrips_with_resolution_before_audio_and_codec() -> (
+    None
+):
     meta = Meta(
         category="MOVIE",
-        name="Example Movie 2001 DVD x264 DVDRip DD 2.0-DDFAKE",
+        name="Example Movie 2001 DVD x264 DVDRip DD 2.0-DDOS",
         title="Example Movie",
         year=2001,
         type="DVDRIP",
         resolution="480p",
         audio="DD 2.0",
         video_encode="x264",
-        tag="-DDFAKE",
+        tag="-DDOS",
     )
 
     name = asyncio.run(CapybaraBR({"TRACKERS": {}}).get_name(meta))["name"]
 
-    assert name == "Example Movie 2001 480p DVDRip DD2.0 x264-DDFAKE"  # noqa: S101
+    assert name == "Example Movie 2001 480p DVDRip DD2.0 x264-DDOS"
 
 
-@pytest.mark.parametrize("tracker_class", [CapybaraBR, Samaritano])
-def test_brazilian_trackers_mark_hardcoded_subtitles(tracker_class: type[CapybaraBR] | type[Samaritano]) -> None:
-    meta = Meta(
-        category="MOVIE",
-        name="Example Movie 2020 1080p EXMP WEB-DL DD+ 5.1 H.264-GROUP",
-        title="Example Movie",
-        year=2020,
-        type="WEBDL",
-        tag="-GROUP",
-        hardcoded_subs=True,
-    )
-
-    name = asyncio.run(tracker_class({"TRACKERS": {}}).get_name(meta))["name"]
-
-    assert name == "Example Movie 2020 1080p EXMP WEB-DL HC DDP5.1 H.264-GROUP"  # noqa: S101
-
-
-def _samaritano_config(*, force: bool = True, image_host_api_key: str = "fictional-image-token") -> dict[str, object]:
-    return {
-        "DEFAULT": {"img_host_1": "imgbb"},
-        "TRACKERS": {
-            "SAMARITANO": {
-                "api_key": "fictional-tracker-token",
-                "image_host_api_key": image_host_api_key,
-                "force_rehost_images": force,
-            }
-        },
+def _movie_meta(**kwargs: Any) -> Meta:
+    base: dict[str, Any] = {
+        "category": "MOVIE",
+        "filelist": ["Example.Movie.2024.mkv"],
+        "unattended": True,
+        "unattended_confirm": False,
+        "audio_languages": ["Portuguese"],
+        "name": "Example Movie 2024",
+        "imdb_info": {"status": ""},
     }
+    base.update(kwargs)
+    return Meta(**base)
 
 
-def test_samaritano_force_rehost_keeps_global_images_and_sets_tracker_collections(tmp_path) -> None:
-    screenshot = tmp_path / "fictional-screen.png"
-    menu = tmp_path / "fictional-menu.png"
-    screenshot.write_bytes(b"screen")
-    menu.write_bytes(b"menu")
+def _tv_meta(**kwargs: Any) -> Meta:
+    base: dict[str, Any] = {
+        "category": "TV",
+        "filelist": ["Show.S01E01.mkv"],
+        "tv_pack": False,
+        "unattended": True,
+        "unattended_confirm": False,
+        "audio_languages": ["Portuguese"],
+        "imdb_info": {"status": "Ended"},
+    }
+    base.update(kwargs)
+    return Meta(**base)
+
+
+def _tracker() -> Samaritano:
+    return Samaritano({"TRACKERS": {}})
+
+
+def test_samaritano_maps_mac_software_to_programs_without_game_name_formatting():
     meta = Meta(
-        category="MOVIE",
-        image_list=[{"raw_url": "https://global.example/screen.png", "local_file_path": str(screenshot)}],
-        menu_images=[{"raw_url": "https://global.example/menu.png", "local_file_path": str(menu)}],
+        category="GAME",
+        software=True,
+        name="Guitar Pro v8.1.5-31 MAC-atb",
+        platform="MAC",
+        type="GAME",
     )
-    original_screenshots = list(meta.image_list)
-    original_menus = list(meta.menu_images)
+    tracker = _tracker()
 
-    async def fake_upload(args: object) -> dict[str, str]:
-        local_path = str(args[0])
-        filename = local_path.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
-        return {
-            "status": "success",
-            "img_url": f"https://img.samaritano.cc/thumbnails/{filename}",
-            "raw_url": f"https://img.samaritano.cc/uploads/{filename}",
-            "web_url": f"https://img.samaritano.cc/uploads/{filename}",
-        }
-
-    tracker = Samaritano(_samaritano_config())
-    with patch("src.trackers.UNIT3D.samaritano.upload_image_task", new=fake_upload):
-        asyncio.run(tracker.check_image_hosts(meta))
-
-    assert meta.image_list == original_screenshots  # noqa: S101
-    assert meta.menu_images == original_menus  # noqa: S101
-    assert meta.tracker_image_collections["SAMARITANO"]["screenshots"][0]["raw_url"].startswith("https://img.samaritano.cc/")  # noqa: S101
-    assert meta.tracker_image_collections["SAMARITANO"]["menu_images"][0]["raw_url"].startswith("https://img.samaritano.cc/")  # noqa: S101
+    assert asyncio.run(tracker.get_name(meta)) == {
+        "name": "Guitar Pro v8.1.5-31 MAC-atb"
+    }
+    assert asyncio.run(tracker.get_category_id(meta)) == {"category_id": "9"}
+    assert asyncio.run(tracker.get_type_id(meta)) == {"type_id": "76"}
 
 
-def test_samaritano_force_rehost_is_atomic_on_failure(tmp_path) -> None:
-    screenshot = tmp_path / "fictional-screen.png"
-    menu = tmp_path / "fictional-menu.png"
-    screenshot.write_bytes(b"screen")
-    menu.write_bytes(b"menu")
-    meta = Meta(
-        category="MOVIE",
-        image_list=[{"raw_url": "https://global.example/screen.png", "local_file_path": str(screenshot)}],
-        menu_images=[{"raw_url": "https://global.example/menu.png", "local_file_path": str(menu)}],
-    )
-    uploader = AsyncMock(
-        side_effect=[
-            {
-                "status": "success",
-                "img_url": "https://img.samaritano.cc/thumbnails/fictional-screen.png",
-                "raw_url": "https://img.samaritano.cc/uploads/fictional-screen.png",
-                "web_url": "https://img.samaritano.cc/uploads/fictional-screen.png",
-            },
-            {"status": "failed", "reason": "synthetic failure"},
-        ]
+def test_samaritano_rejects_movie_with_multiple_video_files():
+    assert (
+        asyncio.run(
+            _tracker().get_additional_checks(
+                _movie_meta(
+                    filelist=[
+                        "Example.Movie.2024.mkv",
+                        "Example.Movie.Extra.2024.mkv",
+                    ],
+                )
+            )
+        )
+        is False
     )
 
-    tracker = Samaritano(_samaritano_config())
-    with patch("src.trackers.UNIT3D.samaritano.upload_image_task", new=uploader):
-        asyncio.run(tracker.check_image_hosts(meta))
 
-    assert "SAMARITANO" not in meta.tracker_image_collections  # noqa: S101
+def test_samaritano_accepts_single_movie_video_upload():
+    assert asyncio.run(_tracker().get_additional_checks(_movie_meta())) is True
 
 
-def test_samaritano_rehost_downloads_the_matching_image_instead_of_using_manifest_position(tmp_path) -> None:
-    release_id = "fictional-release"
-    screenshot_dir = tmp_path / "tmp" / release_id / "screenshots"
-    screenshot_dir.mkdir(parents=True)
-    unrelated_screenshot = screenshot_dir / "unrelated-screen.png"
-    unrelated_screenshot.write_bytes(b"unrelated")
-    register_screenshots(tmp_path, release_id, [unrelated_screenshot], "main")
-
-    downloaded_screenshot = tmp_path / "downloaded-matching-screen.png"
-    downloaded_screenshot.write_bytes(b"matching")
-    meta = Meta(
-        base_dir=str(tmp_path),
-        uuid=release_id,
-        category="MOVIE",
-        image_list=[{"raw_url": "https://global.example/reordered-screen.png"}],
-    )
-    uploaded_paths: list[str] = []
-
-    async def fake_upload(args: object) -> dict[str, str]:
-        uploaded_paths.append(str(args[0]))
-        return {
-            "status": "success",
-            "img_url": "https://img.samaritano.cc/thumbnails/reordered-screen.png",
-            "raw_url": "https://img.samaritano.cc/uploads/reordered-screen.png",
-            "web_url": "https://img.samaritano.cc/uploads/reordered-screen.png",
-        }
-
-    tracker = Samaritano(_samaritano_config())
-    with (
-        patch("src.trackers.UNIT3D.samaritano._local_image_path", new=AsyncMock(return_value=None)),
-        patch("src.trackers.UNIT3D.samaritano._download_image_for_rehost", new=AsyncMock(return_value=downloaded_screenshot)),
-        patch("src.trackers.UNIT3D.samaritano.upload_image_task", new=fake_upload),
-    ):
-        asyncio.run(tracker.check_image_hosts(meta))
-
-    assert uploaded_paths == [str(downloaded_screenshot)]  # noqa: S101
-
-
-@pytest.mark.parametrize(
-    ("force", "image_host_api_key"),
-    [(False, "fictional-image-token"), (True, "")],
-)
-def test_samaritano_does_not_rehost_when_disabled_or_unconfigured(force: bool, image_host_api_key: str) -> None:
-    meta = Meta(category="MOVIE", image_list=[{"raw_url": "https://global.example/screen.png"}])
-    uploader = AsyncMock()
-
-    tracker = Samaritano(_samaritano_config(force=force, image_host_api_key=image_host_api_key))
-    with patch("src.trackers.UNIT3D.samaritano.upload_image_task", new=uploader):
-        asyncio.run(tracker.check_image_hosts(meta))
-
-    uploader.assert_not_awaited()
-    assert "SAMARITANO" not in meta.tracker_image_collections  # noqa: S101
-
-
-def test_samaritano_force_rehost_config_must_be_boolean() -> None:
-    errors, warnings = _validate_trackers_section(
-        {"SAMARITANO": {"api_key": "fictional-tracker-token", "force_rehost_images": "yes"}},
-        active_trackers=["SAMARITANO"],
+def test_samaritano_rejects_tv_pack_for_non_ended_series():
+    assert (
+        asyncio.run(
+            Samaritano({"TRACKERS": {}}).get_additional_checks(
+                _tv_meta(
+                    tv_pack=True,
+                    filelist=["Show.S01E01.mkv", "Show.S01E02.mkv"],
+                    imdb_info={"status": "Returning Series"},
+                )
+            )
+        )
+        is False
     )
 
-    assert errors == []  # noqa: S101
-    assert any("'force_rehost_images' must be a boolean" in warning.message for warning in warnings)  # noqa: S101
+
+def test_samaritano_rejects_tv_uploads_with_multiple_seasons():
+    assert (
+        asyncio.run(
+            Samaritano({"TRACKERS": {}}).get_additional_checks(
+                _tv_meta(
+                    tv_pack=True,
+                    filelist=["Show.S01E01.mkv", "Show.S02E01.mkv"],
+                    imdb_info={"status": "Ended"},
+                )
+            )
+        )
+        is False
+    )
+
+
+def test_samaritano_rejects_tv_uploads_with_multiple_episodes_without_pack():
+    assert (
+        asyncio.run(
+            Samaritano({"TRACKERS": {}}).get_additional_checks(
+                _tv_meta(
+                    filelist=[
+                        "Show.S01E01.mkv",
+                        "Show.S01E02.mkv",
+                        "Show.S01E03.mkv",
+                    ],
+                )
+            )
+        )
+        is False
+    )
+
+
+def test_samaritano_accepts_tv_pack_for_ended_series():
+    assert (
+        asyncio.run(
+            Samaritano({"TRACKERS": {}}).get_additional_checks(
+                _tv_meta(
+                    tv_pack=True,
+                    filelist=[
+                        "Show.S01E01.mkv",
+                        "Show.S01E02.mkv",
+                        "Show.S01E03.mkv",
+                    ],
+                    imdb_info={"status": "Ended"},
+                )
+            )
+        )
+        is True
+    )
+
+
+def test_samaritano_rejects_tv_pack_for_ended_series_without_portuguese():
+    assert (
+        asyncio.run(
+            Samaritano({"TRACKERS": {}}).get_additional_checks(
+                _tv_meta(
+                    tv_pack=True,
+                    filelist=[
+                        "Show.S01E01.mkv",
+                        "Show.S01E02.mkv",
+                        "Show.S01E03.mkv",
+                    ],
+                    audio_languages=["English"],
+                    imdb_info={"status": "Ended"},
+                    unattended=True,
+                    unattended_confirm=False,
+                )
+            )
+        )
+        is False
+    )

@@ -1,184 +1,177 @@
 [project]
 name = "upload-assistant"
-version = "4.9"
-requires-python = ">=3.14"
-description = "A simple tool to take the work out of uploading."
+version = "3.6.0"
+description = "CLI for preparing media releases and uploading them to tracker and Usenet integrations"
 readme = "README.md"
-license-files = ["LICENSE"]
+requires-python = ">=3.14,<3.15"
+license = "UAPL-1.0"
 authors = [
-    { name = "wastaken7" },
-]
-maintainers = [
-    { name = "wastaken7" },
-]
-keywords = ["media", "torrent", "upload-assistant"]
-classifiers = [
-    "Development Status :: 5 - Production/Stable",
-    "Environment :: Console",
-    "Intended Audience :: End Users/Desktop",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.14",
-    "Programming Language :: Python :: 3.15",
-    "Topic :: Multimedia",
-    "Topic :: Utilities",
+  { name = "Upload Assistant contributors" },
 ]
 dependencies = [
-    "aiofiles==25.1.0",
-    "anitopy==2.1.1",
-    "argcomplete>=3.7.2",
-    "argon2-cffi==25.1.0",
-    "babel==2.18.0",
-    "bbcode==1.1.0",
-    "beautifulsoup4==4.15.0",
-    "bencode-py==4.1.0",
-    "cachelib==0.17.0",
-    "certifi==2026.10.23",
-    "cli-ui==0.19.0",
-    "click==8.5.0",
-    "cloudscraper==1.2.71",
-    "cryptography==50.0.2",
-    "defusedxml==0.7.1",
-    "deluge-client==1.10.2",
-    "ffmpeg-python==0.2.0",
-    "flask==3.1.3",
-    "flask-cors==6.0.5",
-    "flask-limiter==4.1.1",
-    "flask-session==0.8.0",
-    "guessit==4.4.0",
-    "httpx==0.28.1",
-    "jinja2==3.1.6",
-    "langcodes==3.5.1",
-    "lxml==6.1.3",
-    "mobi==0.4.1",
-    "mutagen==1.48.1",
-    "packaging>=21",
-    "pillow==13.0.0",
-    "psutil==7.2.2",
-    "pycountry==26.2.16",
-    "pyimgbox==1.0.7",
-    "pymupdf==1.28.2",
-    "pyotp==2.10.0",
-    "pywinpty==3.1.2 ; sys_platform == 'win32'",
-    "qbittorrent-api==2026.10.1",
-    "rarfile==4.5",
-    "requests==2.34.2",
-    "rich==15.0.0",
-    "tmdbsimple==2.9.8",
-    "torf==4.3.1",
-    "transmission-rpc==7.0.12",
-    "unidecode==1.4.0",
-    "waitress==3.0.2",
+  "aiofiles==25.1.0",
+  "anitopy==2.1.1",
+  "babel==2.17.0",
+  "bbcode==1.1.0",
+  "beautifulsoup4==4.14.2",
+  "bencode.py==4.0.0",
+  "certifi==2026.1.4",
+  "cli-ui==0.19.0",
+  "click==8.1.8",
+  "cloudscraper==1.2.71",
+  "defusedxml==0.7.1",
+  "deluge-client==1.10.2",
+  "ffmpeg-python==0.2.0",
+  "guessit==3.8.0",
+  "httpx==0.28.1",
+  "jinja2==3.1.6",
+  "langcodes==3.5.1",
+  "language-data==1.4.0",
+  "librosa==0.11.0",
+  "lxml==6.1.0",
+  "matplotlib==3.11.1",
+  "mobi==0.4.1",
+  "mutagen==1.47.0",
+  "numpy==2.4.4",
+  "packaging==24.2",
+  "pillow==12.3.0",
+  "psutil==7.2.2",
+  "pycountry==24.6.1",
+  "pyimgbox==1.0.7",
+  "pymupdf==1.28.0",
+  "pywinpty==3.0.5; sys_platform == 'win32'",
+  "qbittorrent-api==2026.6.0",
+  "rarfile==4.2",
+  "regex==2025.11.3",
+  "requests==2.33.0",
+  "rich==13.9.4",
+  "torf==4.3.0",
+  "tqdm==4.67.1",
+  "transmission-rpc==7.0.11",
+  "tvdb-v4-official==1.1.0",
+  "unidecode==1.4.0",
 ]
 
-[project.urls]
-Homepage = "https://github.com/wastaken7/Upload-Assistant"
-Documentation = "https://github.com/wastaken7/Upload-Assistant/tree/master/docs"
-Issues = "https://github.com/wastaken7/Upload-Assistant/issues"
-Source = "https://github.com/wastaken7/Upload-Assistant"
+[dependency-groups]
+dev = [
+  "basedpyright>=1.31.4",
+  "coverage[toml]>=7.15.4",
+  "pytest>=9.1.1",
+  "pytest-asyncio>=1.4.0",
+  "pytest-cov>=7.1.0",
+  "radon==6.0.1",
+  "resvg-py==0.3.3",
+  "ruff>=0.16.3",
+]
 
-[build-system]
-requires = ["setuptools>=83"]
-build-backend = "setuptools.build_meta"
+[tool.uv]
+package = false
 
-[project.scripts]
-ua = "upload:run"
+[tool.pytest.ini_options]
+addopts = [
+  "--strict-config",
+  "--strict-markers",
+  "-ra",
+]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
 
-[tool.setuptools]
-py-modules = ["upload"]
-include-package-data = false
+[tool.coverage.run]
+branch = false
+source = ["src"]
+relative_files = true
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["bin*", "data*", "src*", "web_ui*"]
-exclude = ["tests", "tmp", "build", "build.*"]
+[tool.coverage.report]
+fail_under = 100
+precision = 2
+show_missing = true
+skip_empty = true
+sort = "Cover"
 
-[tool.setuptools.package-data]
-data = ["exoticaz_tags.json", "tags.json","templates/*.csv", "templates/*.json", "unit3d_catalogs/*.json"]
-web_ui = ["static/**/*", "templates/*.html"]
+[tool.coverage.json]
+output = "build/coverage/coverage.json"
+pretty_print = true
+
+[tool.coverage.xml]
+output = "build/coverage/coverage.xml"
 
 [tool.ruff]
-line-length = 176
+line-length = 79
 target-version = "py314"
 exclude = [
   ".git",
-  "tests",
-  "__pycache__",
   ".pytest_cache",
   ".ruff_cache",
+  ".venv",
+  "build",
+  "data/cache",
+  "data/sessions",
   "tmp",
 ]
 
 [tool.ruff.lint]
 select = [
-  # Core correctness
-  "E",     # pycodestyle errors
-  "F",     # Pyflakes (logical and syntax errors)
-  "W",     # pycodestyle warnings
-  "B",     # flake8-bugbear (likely bugs and design issues)
-
-  # Imports & modernization
-  "I",     # isort (import sorting)
-  "UP",    # pyupgrade (code modernization)
-
-  # Code quality & safety
-  "C4",    # flake8-comprehensions (better list/dict/set comprehension syntax)
-  "SIM",   # flake8-simplify (code simplification suggestions)
-  "PERF",  # Perflint (performance anti-patterns detection)
-  "ARG",   # flake8-unused-arguments (unused function arguments)
-  "RUF",   # Ruff-specific rules and lints
-  "S",     # flake8-bandit (security testing and checks)
-  "PTH",   # flake8-use-pathlib (encourage pathlib over os.path)
-  "N",     # pep8-naming (naming conventions alignment)
-  "RET",   # flake8-return (return statement check)
-
-  # Dates & time
-  "DTZ",   # flake8-datetimez (prevent timezone-naive datetime usage)
-
-  # Async (if applicable)
-  "ASYNC", # flake8-async (concurrency and async checks)
+  "E",
+  "F",
+  "W",
+  "B",
+  "I",
+  "UP",
+  "C4",
+  "SIM",
+  "PERF",
+  "ARG",
+  "RUF",
+  "S",
+  "PTH",
+  "N",
+  "RET",
+  "DTZ",
+  "ASYNC",
 ]
 ignore = [
-  "ASYNC240", # Blocking pathlib methods in async functions
-  "E501",     # Line too long (line length violations)
-  "S314",     # Using vulnerable xml.etree.ElementTree for XML parsing
+  "ASYNC240",
+  "E501",
+  "S314",
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "upload.py" = ["E402"]
-"src/trackers/UNIT3D/UNIT3D_TEMPLATE.py" = ["N999"]
+"tests/**/*.py" = ["S101", "S105"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["data", "src", "web_ui"]
+known-first-party = ["data", "src"]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 
-[tool.pyright]
+[tool.basedpyright]
 pythonVersion = "3.14"
 typeCheckingMode = "standard"
-reportMissingImports = true
-reportMissingTypeStubs = false
-reportUnknownMemberType = true
-reportUnknownVariableType = true
+reportMissingImports = "error"
+reportMissingTypeStubs = "none"
+reportUnknownMemberType = "warning"
+reportUnknownVariableType = "warning"
+include = ["src", "upload.py", "config-generator.py"]
 exclude = [
-  "tests",
+  "build",
   "data",
+  "tests",
   "tmp",
-  "**/__pyrefly_virtual__/**",
-  "**/node_modules",
   "**/__pycache__",
-  "**/.*",
 ]
 
-[tool.pyrefly]
-disable-search-path-heuristics = true
-search-path = ["."]
-project-excludes = [
-    "**/__pyrefly_virtual__/**",
-    "**/tmp/**"
-]
 
-[dependency-groups]
-dev = [
-    "pytest>=9.2.0",
-    "pytest-asyncio>=1.4.1",
-    "resvg-py==0.5.0",
-]
+[tool.radon]
+cc_min = "A"
+cc_max = "A"
+show_complexity = true
+no_assert = true
+exclude = ".git,.venv,build,data/cache,data/sessions,tmp"
+
+[tool.upload-assistant.quality]
+max_architecture_violations = 0
+minimum_line_coverage = 100.0
+max_new_module_lines = 800
+max_new_function_lines = 120
+max_cyclomatic_complexity = 5
+complexity_paths = ["src", "upload.py", "config-generator.py", "scripts", "tests"]

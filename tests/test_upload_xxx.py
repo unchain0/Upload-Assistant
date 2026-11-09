@@ -1,9 +1,8 @@
 """Regression tests for XXX image-upload thresholds."""
 
 # Assertions are the idiomatic pytest checks for this focused threshold test.
-# ruff: noqa: S101
 
-from src.meta import Meta
+from src.domain_models.release import Meta
 from upload import xxx_min_successful_uploads
 
 

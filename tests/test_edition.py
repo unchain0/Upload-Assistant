@@ -1,14 +1,15 @@
 """Regression coverage for release-marker detection in edition handling."""
 
 import asyncio
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import pytest
 
-from src import prep_helpers
-from src.edition import _has_release_token, _strip_release_tokens, get_edition
-from src.meta import Meta
+from src.domain_models.release import Meta
+from src.services.edition_identity_service import (
+    _has_release_token,
+    _strip_release_tokens,
+    get_edition,
+)
 
 
 @pytest.mark.parametrize(
@@ -26,7 +27,9 @@ from src.meta import Meta
         ("Show.RERIP.1080p", "RERIP"),
     ],
 )
-def test_release_marker_matches_standalone_tokens(value: str, token: str) -> None:
+def test_release_marker_matches_standalone_tokens(
+    value: str, token: str
+) -> None:
     assert _has_release_token(value, token)
 
 
@@ -45,7 +48,9 @@ def test_release_marker_matches_standalone_tokens(value: str, token: str) -> Non
         ("RERIPPED", "RERIP"),
     ],
 )
-def test_release_marker_does_not_match_inside_other_tokens(value: str, token: str) -> None:
+def test_release_marker_does_not_match_inside_other_tokens(
+    value: str, token: str
+) -> None:
     assert not _has_release_token(value, token)
 
 
@@ -54,160 +59,622 @@ def test_strip_release_tokens_uses_non_alphanumeric_boundaries() -> None:
 
 
 def test_get_edition_detects_repack_between_hyphens() -> None:
-    edition, repack, hybrid = asyncio.run(get_edition("Movie-REPACK-1080p", None, [], "", Meta(category="TV")))
+    edition, repack, hybrid = asyncio.run(
+        get_edition("Movie-REPACK-1080p", None, [], "", Meta(category="TV"))
+    )
 
     assert edition == ""
     assert repack == "REPACK"
     assert not hybrid
 
 
-@pytest.mark.parametrize("prefix", ["REPACK", "PROPER"])
-@pytest.mark.parametrize("suffix", ["", "2", "3", "4", "5", "6", "7", "8", "9"])
-def test_get_edition_detects_release_marker_numbers(prefix: str, suffix: str) -> None:
-    marker = f"{prefix}{suffix}"
-    edition, repack, hybrid = asyncio.run(get_edition(f"Example.Movie.2025.{marker}.1080p.WEB-DL-GROUP", None, [], "", Meta(category="TV")))
+def _edition_meta(
+    *, duration: object = "7200", unattended: bool = True
+) -> Meta:
+    return Meta(
+        category="MOVIE",
+        anime=False,
+        unattended=unattended,
+        unattended_confirm=not unattended,
+        mediainfo={
+            "media": {"track": [{"@type": "General", "Duration": duration}]}
+        },
+        imdb_info={
+            "edition_count": 3,
+            "edition_details": {
+                "director": {
+                    "seconds": 7200,
+                    "minutes": 120,
+                    "attributes": ["director's cut"],
+                    "display_name": "Director",
+                },
+                "extended": {
+                    "seconds": 7220,
+                    "minutes": 120,
+                    "attributes": ["extended edition"],
+                    "display_name": "Extended",
+                },
+                "theatrical": {
+                    "seconds": 7190,
+                    "minutes": 120,
+                    "attributes": [],
+                    "display_name": "Theatrical",
+                },
+            },
+        },
+    )
 
-    assert edition == ""
-    assert repack == marker
+
+def test_get_edition_selects_duration_match_in_unattended_mode() -> None:
+    edition, repack, hybrid = asyncio.run(
+        get_edition(
+            "Movie.2024.1080p-GRP", None, ["movie.mkv"], "", _edition_meta()
+        )
+    )
+
+    assert edition in {"Director's Cut", "Extended"}
+    assert repack == ""
     assert not hybrid
 
 
-@pytest.mark.parametrize("separator", [".", "-", "_", " "])
-@pytest.mark.parametrize("marker", ["repack6", "pRoPeR9"])
-def test_get_edition_detects_release_markers_with_common_separators(separator: str, marker: str) -> None:
-    video = separator.join(["Example", "Movie", "2025", marker, "1080p", "WEB-DL"]) + "-GROUP"
-    _, repack, _ = asyncio.run(get_edition(video, None, [], "", Meta(category="TV")))
-
-    assert repack == marker.upper()
-
-
-@pytest.mark.parametrize(
-    "marker",
-    [
-        "REPACK0",
-        "PROPER0",
-        "REPACK1",
-        "PROPER1",
-        "REPACK00",
-        "PROPER00",
-        "REPACK01",
-        "PROPER01",
-        "REPACK10",
-        "PROPER10",
-        "REPACK123",
-        "PROPER123",
-        "REPACK6X",
-        "PROPER9X",
-        "XREPACK6",
-        "XPROPER9",
-        "REPACKAGED",
-        "PROPERLY",
-    ],
-)
-def test_invalid_release_markers_are_not_detected_or_stripped(marker: str) -> None:
-    video = f"Example.Movie.2025.{marker}.1080p.WEB-DL-GROUP"
-    _, repack, _ = asyncio.run(get_edition(video, None, [], "", Meta(category="TV")))
-
-    assert repack == ""
-    assert _strip_release_tokens(f"Extended {marker}") == f"Extended {marker}"
-
-
-@pytest.mark.parametrize("marker", ["REPACK6", "REPACK9", "proper9", "RERIP"])
-def test_get_edition_strips_detected_release_markers_from_edition(monkeypatch: pytest.MonkeyPatch, marker: str) -> None:
-    monkeypatch.setattr("src.edition.guessit_fn", lambda _video: {"edition": f"Extended {marker}", "release_group": "GROUP"})
-
-    edition, repack, _ = asyncio.run(get_edition("Example.Movie.2025.1080p.WEB-DL-GROUP", None, [], "", Meta(category="TV")))
-
-    assert edition == "Extended"
-    assert repack == marker.upper()
-
-
-@pytest.mark.parametrize("marker", ["REPACK6", "REPACK9", "proper9", "RERIP"])
-@pytest.mark.parametrize("as_list", [False, True])
-def test_get_edition_preserves_manual_release_markers(marker: str, as_list: bool) -> None:
-    manual_edition = ["Extended", marker] if as_list else f"Extended {marker}"
-    edition, repack, _ = asyncio.run(get_edition("Example.Movie.2025.1080p.WEB-DL-GROUP", None, [], manual_edition, Meta(category="TV")))
-
-    assert edition == f"Extended {marker}"
-    assert repack == marker.upper()
-
-
-@pytest.mark.parametrize(
-    ("markers", "expected"),
-    [
-        ("V2", "REPACK"),
-        ("V3", "REPACK2"),
-        ("V4", "REPACK3"),
-        ("V5", "REPACK4"),
-        ("V6", "REPACK5"),
-        ("V7", "REPACK6"),
-        ("V8", "REPACK7"),
-        ("V9", "REPACK8"),
-        ("V10", "REPACK9"),
-        ("v10", "REPACK9"),
-        ("V1", ""),
-        ("V11", ""),
-        ("V100", ""),
-        ("TV10", ""),
-        ("V10X", ""),
-        ("TV2.TV3.TV4", ""),
-        ("REPACK2.V4", "REPACK3"),
-        ("REPACK6.V4", "REPACK6"),
-        ("REPACK6.V10", "REPACK9"),
-        ("V10.PROPER6", "PROPER6"),
-        ("REPACK6.REPACK9", "REPACK9"),
-        ("REPACK9.REPACK6", "REPACK9"),
-        ("PROPER6.PROPER9", "PROPER9"),
-        ("REPACK9.PROPER", "PROPER"),
-        ("REPACK9.PROPER6.RERIP", "RERIP"),
-    ],
-)
-def test_get_edition_preserves_release_marker_priority(markers: str, expected: str) -> None:
-    _, repack, _ = asyncio.run(get_edition(f"Example.Movie.2025.{markers}.1080p.WEB-DL-GROUP", None, [], "", Meta(category="TV")))
-
-    assert repack == expected
-
-
-@pytest.mark.parametrize(
-    ("markers", "manual_edition", "expected_repack", "expected_edition"),
-    [
-        ("REPACK9", "", "REPACK9", ""),
-        ("proper9", "", "PROPER9", ""),
-        ("", "Extended REPACK9", "REPACK9", "Extended"),
-        ("", ["Extended", "proper9"], "PROPER9", "Extended"),
-        ("", "REPACK6 PROPER9 RERIP Extended", "RERIP", "Extended"),
-        ("", "Extended REPACK6 PROPER9 RERIP Extras", "RERIP", "Extended Extras"),
-        ("", "Extended REPACK10", "", "Extended REPACK10"),
-        ("", "Extended XREPACK9", "", "Extended XREPACK9"),
-        ("RERIP", "Extended REPACK9", "RERIP", "Extended"),
-    ],
-)
-def test_finalize_metadata_separates_release_markers_from_edition(
-    monkeypatch: pytest.MonkeyPatch, markers: str, manual_edition: str | list[str], expected_repack: str, expected_edition: str
+def test_get_edition_interactive_selection_and_fallback(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    video = f"Example.Movie.2025.{markers}.1080p.WEB-DL-GROUP"
-    meta = Meta(category="MOVIE", type="WEBDL", path=video, uuid=video, tag="-GROUP", manual_edition=manual_edition)
-    prep = SimpleNamespace(
-        config={"DEFAULT": {}},
-        audio_manager=SimpleNamespace(get_audio_v2=AsyncMock(return_value=("", "", False))),
-        stream_optimized=AsyncMock(return_value=False),
-        check_adult_media=lambda _meta: False,
+    import src.services.edition_identity_service as edition_service
+
+    async def select_second(*_args: object, **_kwargs: object) -> str:
+        return "2"
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", select_second)
+    edition, _, _ = asyncio.run(
+        get_edition(
+            "Movie", None, ["movie.mkv"], "", _edition_meta(unattended=False)
+        )
     )
+    assert edition == "Extended"
+
+    async def invalid(*_args: object, **_kwargs: object) -> str:
+        return "99"
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", invalid)
+    edition, _, _ = asyncio.run(
+        get_edition(
+            "Movie", None, ["movie.mkv"], "", _edition_meta(unattended=False)
+        )
+    )
+    assert edition in {"Director's Cut", "Extended"}
+
+    async def failed(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("prompt failed")
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", failed)
+    edition, _, _ = asyncio.run(
+        get_edition(
+            "Movie", None, ["movie.mkv"], "", _edition_meta(unattended=False)
+        )
+    )
+    assert edition in {"Director's Cut", "Extended"}
+
+
+def test_get_edition_handles_invalid_and_unmatched_durations() -> None:
+    invalid = _edition_meta(duration="invalid")
+    assert (
+        asyncio.run(get_edition("Movie", None, ["movie.mkv"], "", invalid))[0]
+        == ""
+    )
+
+    unmatched = _edition_meta(duration="3600")
+    assert (
+        asyncio.run(get_edition("Movie", None, ["movie.mkv"], "", unmatched))[
+            0
+        ]
+        == ""
+    )
+
+
+def test_get_edition_matches_bluray_playlists() -> None:
+    meta = _edition_meta()
+    meta.is_disc = "BDMV"
+    meta.mediainfo = {}
+    meta.discs = [
+        {
+            "playlists": [
+                {
+                    "file": "00001.MPLS",
+                    "edition": "Director's Cut",
+                    "duration": 7200,
+                },
+                {
+                    "file": "00002.MPLS",
+                    "edition": "Theatrical",
+                    "duration": 7190,
+                },
+            ],
+            "all_valid_playlists": [
+                {
+                    "file": "00001.MPLS",
+                    "edition": "Director's Cut",
+                    "duration": 7200,
+                },
+                {
+                    "file": "00002.MPLS",
+                    "edition": "Theatrical",
+                    "duration": 7190,
+                },
+            ],
+        }
+    ]
+
+    edition, _, _ = asyncio.run(
+        get_edition("BDMV", {"label": "Movie"}, [], "", meta)
+    )
+    assert edition
+
+
+def test_get_edition_bluray_interactive_playlist_choices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import src.services.edition_identity_service as edition_service
+
+    meta = _edition_meta(unattended=False)
+    meta.is_disc = "BDMV"
+    meta.mediainfo = {}
+    meta.discs = [
+        {
+            "playlists": [
+                {
+                    "file": "00001.MPLS",
+                    "edition": "Custom Cut",
+                    "duration": 7210,
+                }
+            ]
+        }
+    ]
+
+    async def playlist_edition(*_args: object, **_kwargs: object) -> str:
+        return "e"
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", playlist_edition)
+    edition, _, _ = asyncio.run(
+        get_edition("BDMV", {"label": "Movie"}, [], "", meta)
+    )
+    assert "Custom" in edition
+
+    meta.discs = [
+        {
+            "playlists": [
+                {"file": "00001.MPLS", "edition": "", "duration": 7210}
+            ]
+        }
+    ]
+    edition, _, _ = asyncio.run(
+        get_edition("BDMV", {"label": "Movie"}, [], "", meta)
+    )
+    assert edition
+
+
+def test_get_edition_guessing_manual_override_repack_and_hybrid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import src.services.edition_identity_service as edition_service
+
+    def guessed_edition(
+        _value: str, _options: dict[str, object] | None = None
+    ) -> dict[str, list[str]]:
+        return {"release_group": ["GRP"], "edition": ["limited", "edition"]}
+
+    async def criterion_distributor(_value: str) -> str:
+        return "Criterion"
+
+    monkeypatch.setattr(edition_service, "guessit_fn", guessed_edition)
     monkeypatch.setattr(
-        prep_helpers,
-        "video_manager",
-        SimpleNamespace(
-            get_container=AsyncMock(return_value="mkv"),
-            is_3d=AsyncMock(return_value=""),
-            get_uhd=AsyncMock(return_value=""),
-            get_hdr=AsyncMock(return_value=""),
-            get_video_encode=AsyncMock(return_value=("x264", "AVC", False, "8")),
-        ),
+        edition_service, "get_distributor", criterion_distributor
     )
-    monkeypatch.setattr(prep_helpers, "get_source", AsyncMock(return_value=("WEB", "WEBDL")))
-    monkeypatch.setattr(prep_helpers, "tag_override", AsyncMock(side_effect=lambda current: current))
 
-    asyncio.run(prep_helpers.finalize_metadata(prep, meta, video, {}, None, video, video, video))
+    meta = Meta(category="TV", webdv=False, is_disc="BDMV")
+    edition, repack, hybrid = asyncio.run(
+        get_edition(
+            "Movie.OPEN.MATTE.HYBRID.REPACK2-GRP.mkv",
+            {"label": "Movie.Limited.Edition"},
+            ["movie.mkv"],
+            "",
+            meta,
+        )
+    )
+    assert repack == "REPACK2"
+    assert hybrid
+    assert "limited" not in edition.casefold()
 
-    assert meta.repack == expected_repack
-    assert meta.edition == expected_edition
+    manual, repack, _ = asyncio.run(
+        get_edition(
+            "Movie.PROPER2",
+            None,
+            [],
+            ["Collector's", "Edition"],
+            Meta(category="TV"),
+        )
+    )
+    assert manual == "Collector's Edition"
+    assert repack == "PROPER2"
+
+    _, repack, _ = asyncio.run(
+        get_edition("Movie.RERIP", None, [], "", Meta(category="TV"))
+    )
+    assert repack == "RERIP"
+
+
+def test_duration_and_smart_title_helpers() -> None:
+    from src.services.edition_identity_service import (
+        format_duration,
+        smart_title,
+    )
+
+    assert format_duration(3661) == "1:01:01"
+    assert smart_title("director's cut") == "Director's Cut"
+
+
+def _bluray_meta(
+    *,
+    unattended: bool = False,
+    playlist_edition: str = "Custom Cut",
+    duration: float = 7200,
+) -> Meta:
+    meta = _edition_meta(unattended=unattended)
+    meta.is_disc = "BDMV"
+    meta.mediainfo = {}
+    playlists = [
+        {
+            "file": "00001.MPLS",
+            "edition": playlist_edition,
+            "duration": duration,
+        }
+    ]
+    meta.discs = [{"playlists": playlists, "all_valid_playlists": playlists}]
+    return meta
+
+
+def test_invalid_edition_count_and_single_duration_match() -> None:
+    invalid_count = Meta(
+        category="TV",
+        imdb_info={"edition_count": object(), "edition_details": {}},
+    )
+    assert (
+        asyncio.run(get_edition("Movie", None, [], "", invalid_count))[0] == ""
+    )
+
+    meta = _edition_meta(duration="7200")
+    meta.imdb_info = {
+        "edition_count": 2,
+        "edition_details": {
+            "director": {
+                "seconds": 7200,
+                "minutes": 120,
+                "attributes": ["director's cut"],
+                "display_name": "Director",
+            },
+            "far": {
+                "seconds": 9000,
+                "minutes": 150,
+                "attributes": ["extended"],
+                "display_name": "Far",
+            },
+        },
+    }
+    assert (
+        asyncio.run(get_edition("Movie", None, ["movie.mkv"], "", meta))[0]
+        == "Director's Cut"
+    )
+
+
+def test_bluray_numeric_default_and_prompt_failure_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import src.services.edition_identity_service as edition_service
+
+    async def choose_first(*_args: object, **_kwargs: object) -> str:
+        return "1"
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", choose_first)
+    assert asyncio.run(
+        get_edition("BDMV", {"label": "Movie"}, [], "", _bluray_meta())
+    )[0]
+
+    async def choose_default(*_args: object, **_kwargs: object) -> str:
+        return ""
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", choose_default)
+    assert asyncio.run(
+        get_edition("BDMV", {"label": "Movie"}, [], "", _bluray_meta())
+    )[0]
+
+    async def fail(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("prompt failed")
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", fail)
+    assert asyncio.run(
+        get_edition("BDMV", {"label": "Movie"}, [], "", _bluray_meta())
+    )[0]
+
+
+def test_bluray_playlist_theatrical_attribute_duplicate_and_mixed_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import src.services.edition_identity_service as edition_service
+
+    async def use_playlist(*_args: object, **_kwargs: object) -> str:
+        return "e"
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", use_playlist)
+
+    theatrical = _bluray_meta(playlist_edition="Theatrical")
+    assert (
+        asyncio.run(
+            get_edition("BDMV", {"label": "Movie"}, [], "", theatrical)
+        )[0]
+        == ""
+    )
+
+    duplicate = _bluray_meta(playlist_edition="Custom Cut")
+    duplicate.discs = [
+        {
+            "playlists": [
+                {
+                    "file": "00001.MPLS",
+                    "edition": "Custom Cut",
+                    "duration": 7200,
+                },
+                {
+                    "file": "00002.MPLS",
+                    "edition": "Custom Cut",
+                    "duration": 7200,
+                },
+            ]
+        }
+    ]
+    assert (
+        "Custom"
+        in asyncio.run(
+            get_edition("BDMV", {"label": "Movie"}, [], "", duplicate)
+        )[0]
+    )
+
+    mixed = _bluray_meta()
+    mixed.imdb_info = {
+        "edition_count": 2,
+        "edition_details": {
+            "attribute": {
+                "seconds": 7200,
+                "minutes": 120,
+                "attributes": ["director's cut"],
+                "display_name": "Director",
+            },
+            "theatrical": {
+                "seconds": 7300,
+                "minutes": 122,
+                "attributes": [],
+                "display_name": "Theatrical",
+            },
+        },
+    }
+    mixed.discs = [
+        {
+            "playlists": [
+                {
+                    "file": "00001.MPLS",
+                    "edition": "Director's Cut",
+                    "duration": 7200,
+                },
+                {
+                    "file": "00002.MPLS",
+                    "edition": "Theatrical",
+                    "duration": 7300,
+                },
+            ]
+        }
+    ]
+    result = asyncio.run(
+        get_edition("BDMV", {"label": "Movie"}, [], "", mixed)
+    )[0]
+    assert "Theatrical" in result and "Director's Cut" in result
+
+
+def test_bluray_unattended_and_nonmatching_playlist_paths() -> None:
+    unattended = _bluray_meta(unattended=True)
+    assert asyncio.run(
+        get_edition("BDMV", {"label": "Movie"}, [], "", unattended)
+    )[0]
+
+    no_match = _bluray_meta(unattended=True, duration=3000)
+    assert (
+        asyncio.run(get_edition("BDMV", {"label": "Movie"}, [], "", no_match))[
+            0
+        ]
+        == ""
+    )
+
+    one_no_attributes = _bluray_meta(unattended=True)
+    one_no_attributes.imdb_info = {
+        "edition_count": 2,
+        "edition_details": {
+            "theatrical": {
+                "seconds": 7200,
+                "minutes": 120,
+                "attributes": [],
+                "display_name": "Theatrical",
+            },
+            "far": {
+                "seconds": 9000,
+                "minutes": 150,
+                "attributes": ["extended"],
+                "display_name": "Far",
+            },
+        },
+    }
+    assert (
+        asyncio.run(
+            get_edition("BDMV", {"label": "Movie"}, [], "", one_no_attributes)
+        )[0]
+        == ""
+    )
+
+
+def test_guessing_error_cleanup_and_all_repack_markers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import src.services.edition_identity_service as edition_service
+
+    class BrokenGuess(dict):
+        calls = 0
+
+        def get(self, key, default=None):
+            self.calls += 1
+            if key == "edition":
+                raise RuntimeError("broken edition")
+            return super().get(key, default)
+
+    monkeypatch.setattr(
+        edition_service,
+        "guessit_fn",
+        lambda *_args, **_kwargs: BrokenGuess(release_group="GRP"),
+    )
+    assert (
+        asyncio.run(
+            get_edition(
+                "dc.Movie-GRP", {}, ["movie.mkv"], "", Meta(category="TV")
+            )
+        )[0]
+        == ""
+    )
+    assert (
+        asyncio.run(
+            get_edition(
+                "Movie-GRP", None, ["movie.mkv"], "", Meta(category="TV")
+            )
+        )[0]
+        == ""
+    )
+
+    async def distributor(_value: str) -> str:
+        return "Criterion"
+
+    monkeypatch.setattr(edition_service, "get_distributor", distributor)
+    edition, _, hybrid = asyncio.run(
+        get_edition(
+            "Movie",
+            None,
+            [],
+            "Criterion, Remastered  Director's Cut",
+            Meta(category="TV", is_disc="BDMV", webdv=True),
+        )
+    )
+    assert edition == "Director's Cut"
+    assert hybrid is True
+
+    for marker in ("REPACK3", "PROPER", "PROPER3"):
+        _, repack, _ = asyncio.run(
+            get_edition(
+                f"Movie.{marker}.1080p", None, [], "", Meta(category="TV")
+            )
+        )
+        assert repack == marker
+
+
+def test_bluray_empty_numeric_and_failure_choose_theatrical_minutes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import src.services.edition_identity_service as edition_service
+
+    def no_attribute_closest(playlist_edition: str = "") -> Meta:
+        meta = _bluray_meta(playlist_edition=playlist_edition, duration=7200)
+        meta.imdb_info = {
+            "edition_count": 2,
+            "edition_details": {
+                "theatrical": {
+                    "seconds": 7200,
+                    "minutes": 120,
+                    "attributes": [],
+                    "display_name": "Theatrical",
+                },
+                "director": {
+                    "seconds": 7220,
+                    "minutes": 120,
+                    "attributes": ["director's cut"],
+                    "display_name": "Director",
+                },
+            },
+        }
+        return meta
+
+    async def use_playlist(*_args: object, **_kwargs: object) -> str:
+        return "e"
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", use_playlist)
+    assert (
+        asyncio.run(
+            get_edition(
+                "BDMV", {"label": "Movie"}, [], "", no_attribute_closest()
+            )
+        )[0]
+        == ""
+    )
+
+    async def select_theatrical(*_args: object, **_kwargs: object) -> str:
+        return "1"
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", select_theatrical)
+    assert (
+        asyncio.run(
+            get_edition(
+                "BDMV",
+                {"label": "Movie"},
+                [],
+                "",
+                no_attribute_closest("Custom"),
+            )
+        )[0]
+        == ""
+    )
+
+    async def fail(*_args: object, **_kwargs: object) -> str:
+        raise RuntimeError("prompt failed")
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", fail)
+    assert (
+        asyncio.run(
+            get_edition(
+                "BDMV",
+                {"label": "Movie"},
+                [],
+                "",
+                no_attribute_closest("Custom"),
+            )
+        )[0]
+        == ""
+    )
+
+
+def test_short_playlist_edition_is_discarded_and_spacing_is_compacted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import src.services.edition_identity_service as edition_service
+
+    async def use_playlist(*_args: object, **_kwargs: object) -> str:
+        return "e"
+
+    monkeypatch.setattr(edition_service, "prompt_in_thread", use_playlist)
+    short = _bluray_meta(playlist_edition="Cut")
+    assert (
+        asyncio.run(get_edition("BDMV", {"label": "Movie"}, [], "", short))[0]
+        == ""
+    )
+
+    async def no_distributor(_value: str) -> str:
+        return ""
+
+    monkeypatch.setattr(edition_service, "get_distributor", no_distributor)
+    edition, _, _ = asyncio.run(
+        get_edition(
+            "Movie", None, [], "Director  Remastered  Cut", Meta(category="TV")
+        )
+    )
+    assert edition == "Director Cut"

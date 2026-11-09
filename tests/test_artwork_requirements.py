@@ -1,23 +1,26 @@
-# ruff: noqa: S101
-from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from PIL import Image
 
-import upload
-from src import webui_events
-from src.args import Args
-from src.artwork import prepare_artwork
-from src.meta import Meta
-from src.trackers.UNIT3D import UNIT3D
-from upload import _prompt_book_meta, _prompt_music_meta
-
-
-@pytest.fixture(autouse=True)
-def setup_globals():
-    upload.load_heavy_globals()
+from src.delivery.cli.arguments import Args
+from src.domain_models.release import Meta
+from src.integrations.media.artwork import (
+    MAX_ARTWORK_BYTES,
+    _find_local_artwork_sources,
+    _write_png,
+    audiobook_cover_missing_or_invalid,
+    is_valid_cover_image,
+    prepare_artwork,
+)
+from src.integrations.trackers.UNIT3D import UNIT3D
+from upload import (
+    _prepare_book_artwork,
+    _prompt_book_meta,
+    _prompt_game_meta,
+    _prompt_music_meta,
+)
 
 
 @pytest.mark.asyncio
@@ -25,7 +28,14 @@ async def test_prompt_book_meta_accepts_file_path(tmp_path: Path) -> None:
     cover_file = tmp_path / "cover.jpg"
     Image.new("RGB", (32, 48), "red").save(cover_file)
 
-    meta = Meta(category="BOOK", title="Test Book", author="Test Author", year=2024, book_language="English", book_language_iso="eng")
+    meta = Meta(
+        category="BOOK",
+        title="Test Book",
+        author="Test Author",
+        year=2024,
+        book_language="English",
+        book_language_iso="eng",
+    )
 
     with patch("upload.CLI_UI.ask_string", return_value=str(cover_file)):
         await _prompt_book_meta(meta)
@@ -35,12 +45,40 @@ async def test_prompt_book_meta_accepts_file_path(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_prompt_book_meta_accepts_url() -> None:
-    meta = Meta(category="BOOK", title="Test Book", author="Test Author", year=2024, book_language="English", book_language_iso="eng")
+    meta = Meta(
+        category="BOOK",
+        title="Test Book",
+        author="Test Author",
+        year=2024,
+        book_language="English",
+        book_language_iso="eng",
+    )
 
-    with patch("upload.CLI_UI.ask_string", return_value="https://example.com/cover.jpg"):
+    with patch(
+        "upload.CLI_UI.ask_string",
+        return_value="https://example.com/cover.jpg",
+    ):
         await _prompt_book_meta(meta)
 
     assert meta.artwork_url == "https://example.com/cover.jpg"
+
+
+@pytest.mark.asyncio
+async def test_unattended_book_without_cover_keeps_trackers_for_per_tracker_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    meta = Meta(category="BOOK", unattended=True, trackers=["PEERGARDEN"])
+    monkeypatch.setattr(
+        "upload._ensure_valid_book_artwork", lambda _meta: _false_async()
+    )
+
+    await _prepare_book_artwork(meta)
+
+    assert meta.trackers == ["PEERGARDEN"]
+
+
+async def _false_async() -> bool:
+    return False
 
 
 @pytest.mark.asyncio
@@ -64,7 +102,9 @@ async def test_prompt_music_meta_accepts_file_path(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_prompt_music_meta_rejects_invalid_file_before_accepting_cover(tmp_path: Path) -> None:
+async def test_prompt_music_meta_rejects_invalid_file_before_accepting_cover(
+    tmp_path: Path,
+) -> None:
     invalid_file = tmp_path / "invalid.png"
     invalid_file.write_bytes(b"not an image")
     valid_file = tmp_path / "valid.png"
@@ -79,267 +119,231 @@ async def test_prompt_music_meta_rejects_invalid_file_before_accepting_cover(tmp
         music_release={"fields": {"release_type": {"value": "Album"}}},
     )
 
-    with patch("upload.CLI_UI.ask_string", side_effect=[str(invalid_file), str(valid_file)]):
+    with patch(
+        "upload.CLI_UI.ask_string",
+        side_effect=[str(invalid_file), str(valid_file)],
+    ):
         await _prompt_music_meta(meta)
 
     assert meta.artwork_path == str(valid_file.resolve())
 
 
 @pytest.mark.asyncio
-async def test_prompt_music_meta_lets_artwork_be_skipped_when_no_tracker_requires_it() -> None:
+async def test_prompt_bjshare_x360_uses_xbox_unlock_choices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     meta = Meta(
-        category="MUSIC",
-        artist="Test Artist",
-        title="Test Album",
-        year=2024,
-        source="CD",
-        trackers=["LST"],
-        music_release={"fields": {"release_type": {"value": "Album"}}},
+        category="GAME",
+        trackers=["BJSHARE"],
+        platform="X360",
+        game_system="PAL",
+        game_region="",
+        container="",
+        unattended=False,
     )
-    with patch("upload.CLI_UI.ask_string", return_value="") as mocked:
-        await _prompt_music_meta(meta)
+    monkeypatch.setattr(
+        "src.services.game_preparation.missing_game_fields",
+        lambda _meta: [],
+    )
+    with patch(
+        "upload.CLI_UI.ask_choice", return_value="JTAG/RGH"
+    ) as ask_choice:
+        await _prompt_game_meta(meta)
 
-    assert mocked.call_count == 1
-    assert meta.artwork_path == ""
-    assert meta.artwork_url == ""
+    assert meta.container == "JTAG/RGH"
+    assert ask_choice.call_args.kwargs["choices"] == ["LT", "JTAG/RGH", "Skip"]
 
 
 @pytest.mark.asyncio
-async def test_prompt_music_meta_requires_artwork_for_seedpool(tmp_path: Path) -> None:
-    cover_file = tmp_path / "album_cover.png"
-    Image.new("RGB", (32, 48), "purple").save(cover_file)
-    meta = Meta(
-        category="MUSIC",
-        artist="Test Artist",
-        title="Test Album",
-        year=2024,
-        source="CD",
-        trackers=["LST", "SEEDPOOL"],
-        music_release={"fields": {"release_type": {"value": "Album"}}},
-    )
-
-    with patch("upload.CLI_UI.ask_string", side_effect=["", str(cover_file)]) as mocked:
-        await _prompt_music_meta(meta)
-
-    assert mocked.call_count == 2
-    assert meta.artwork_path == str(cover_file.resolve())
-
-
-def _png_bytes() -> bytes:
-    buffer = BytesIO()
-    Image.new("RGB", (32, 48), "teal").save(buffer, format="PNG")
-    return buffer.getvalue()
-
-
-@pytest.mark.asyncio
-async def test_prompt_music_meta_saves_a_cover_url_locally_for_seedpool(tmp_path: Path) -> None:
-    meta = Meta(
-        category="MUSIC",
-        base_dir=str(tmp_path),
-        uuid="music-cover-url",
-        artist="Test Artist",
-        title="Test Album",
-        year=2024,
-        source="CD",
-        trackers=["SEEDPOOL"],
-        music_release={"fields": {"release_type": {"value": "Album"}}},
-    )
-
-    with (
-        patch("upload.CLI_UI.ask_string", return_value="https://images.example/cover.png") as mocked,
-        patch("upload._download_music_cover", return_value=_png_bytes()),
-    ):
-        await _prompt_music_meta(meta)
-
-    # SEEDPOOL checks a local cover before the image host runs.
-    assert mocked.call_count == 1
-    assert meta.artwork_url == "https://images.example/cover.png"
-    assert Path(meta.artwork_path).is_file()
-
-
-@pytest.mark.asyncio
-async def test_prompt_music_meta_downloads_a_known_cover_url_for_seedpool_without_asking(tmp_path: Path) -> None:
-    meta = Meta(
-        category="MUSIC",
-        base_dir=str(tmp_path),
-        uuid="music-known-cover",
-        artist="Test Artist",
-        title="Test Album",
-        year=2024,
-        source="CD",
-        trackers=["SEEDPOOL"],
-        artwork_url="https://images.example/cover.png",
-        music_release={"fields": {"release_type": {"value": "Album"}}},
-    )
-
-    with patch("upload.CLI_UI.ask_string") as mocked, patch("upload._download_music_cover", return_value=_png_bytes()):
-        await _prompt_music_meta(meta)
-
-    mocked.assert_not_called()
-    assert Path(meta.artwork_path).is_file()
-
-
-@pytest.mark.asyncio
-async def test_unattended_music_upload_does_not_warn_about_optional_artwork() -> None:
-    meta = Meta(
-        category="MUSIC",
-        artist="Test Artist",
-        title="Test Album",
-        year=2024,
-        source="CD",
-        trackers=["LST"],
-        unattended=True,
-        music_release={"fields": {"release_type": {"value": "Album"}}},
-    )
-
-    with patch("upload.logger") as logger:
-        await _prompt_music_meta(meta)
-
-    assert not any("will be skipped" in str(call) for call in logger.info.call_args_list)
-    meta.trackers = ["SEEDPOOL"]
-    with patch("upload.logger") as logger:
-        await _prompt_music_meta(meta)
-
-    assert any("artwork" in str(call) and "will be skipped" in str(call) for call in logger.info.call_args_list)
-
-
-@pytest.mark.asyncio
-async def test_generic_artwork_cli_args_normalize_local_images(tmp_path: Path) -> None:
+async def test_generic_artwork_cli_args_normalize_local_images(
+    tmp_path: Path,
+) -> None:
     cover_file = tmp_path / "cli_cover.png"
     banner_file = tmp_path / "cli_banner.jpg"
     Image.new("RGB", (32, 48), "blue").save(cover_file)
     Image.new("RGB", (96, 32), "red").save(banner_file)
 
     parser = Args({"DEFAULT": {"screens": 4, "img_host_1": "imgbox"}})
-    meta = Meta(category="BOOK", base_dir=str(tmp_path), uuid="generic-artwork")
-    parser.parse([str(tmp_path), "--poster", str(cover_file), "--banner", str(banner_file)], meta)
+    meta = Meta(
+        category="BOOK", base_dir=str(tmp_path), uuid="generic-artwork"
+    )
+    parser.parse(
+        [
+            str(tmp_path),
+            "--poster",
+            str(cover_file),
+            "--banner",
+            str(banner_file),
+        ],
+        meta,
+    )
     await prepare_artwork(meta)
 
     artwork = tmp_path / "tmp" / "generic-artwork" / "artwork"
     assert meta.artwork_path == str(artwork / "POSTER.png")
-    assert meta.artwork_banner_path == str(artwork / "POSTER_BANNER.jpg")
+    assert meta.artwork_banner_path == str(artwork / "POSTER_BANNER.png")
     assert Image.open(meta.artwork_path).format == "PNG"
-    assert Image.open(meta.artwork_banner_path).format == "JPEG"
+    assert Image.open(meta.artwork_banner_path).format == "PNG"
 
 
 @pytest.mark.asyncio
-async def test_generic_poster_url_is_normalized_and_retained(tmp_path: Path) -> None:
+async def test_explicit_local_artwork_honors_byte_limit(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "oversized-poster.png"
+    Image.new("RGB", (32, 48), "blue").save(source)
+    with source.open("ab") as output:
+        output.truncate(MAX_ARTWORK_BYTES + 1)
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="oversized-artwork",
+        explicit_poster=str(source),
+    )
+
+    with patch(
+        "src.integrations.media.artwork.Image.open",
+        side_effect=AssertionError(
+            "oversized explicit artwork must not be decoded"
+        ),
+    ):
+        await prepare_artwork(meta)
+
+    assert not meta.artwork_path
+    assert not (
+        tmp_path / "tmp" / "oversized-artwork" / "artwork" / "POSTER.png"
+    ).exists()
+
+
+def test_write_png_ignores_cleanup_errors(tmp_path: Path) -> None:
+    source = tmp_path / "source.png"
+    Image.new("RGB", (32, 48), "blue").save(source)
+    destination = tmp_path / "poster.png"
+    destination.with_suffix(".tmp").mkdir()
+
+    assert _write_png(source, destination) is False
+    assert not destination.exists()
+
+
+@pytest.mark.asyncio
+async def test_generic_poster_url_is_normalized_and_retained(
+    tmp_path: Path,
+) -> None:
     source = tmp_path / "source.jpg"
     Image.new("RGB", (32, 48), "green").save(source)
-    meta = Meta(base_dir=str(tmp_path), uuid="url-artwork", explicit_poster="https://images.example/poster.jpg")
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="url-artwork",
+        explicit_poster="https://images.example/poster.jpg",
+    )
 
-    with patch("src.artwork.download_public_image", new=AsyncMock(return_value=source.read_bytes())):
+    with patch(
+        "src.integrations.media.artwork._download_public_image",
+        new=AsyncMock(return_value=source.read_bytes()),
+    ):
         await prepare_artwork(meta)
 
     assert meta.artwork_url == "https://images.example/poster.jpg"
-    assert meta.artwork_path == str(tmp_path / "tmp" / "url-artwork" / "artwork" / "POSTER.jpg")
-    assert Image.open(meta.artwork_path).format == "JPEG"
+    assert meta.artwork_path == str(
+        tmp_path / "tmp" / "url-artwork" / "artwork" / "POSTER.png"
+    )
+    assert Image.open(meta.artwork_path).format == "PNG"
 
 
 @pytest.mark.asyncio
-async def test_local_artwork_discovery_normalizes_named_poster_and_banner(tmp_path: Path) -> None:
+async def test_local_artwork_discovery_normalizes_named_poster_and_banner(
+    tmp_path: Path,
+) -> None:
     media_file = tmp_path / "Release.mkv"
     media_file.touch()
     Image.new("RGB", (32, 48), "blue").save(tmp_path / "Release.Cover.jpg")
     Image.new("RGB", (96, 32), "red").save(tmp_path / "Release-Banner.webp")
-    meta = Meta(base_dir=str(tmp_path), uuid="discovered-artwork", path=str(media_file), artwork_url="https://metadata.example/poster.jpg")
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="discovered-artwork",
+        path=str(media_file),
+        artwork_url="https://metadata.example/poster.jpg",
+    )
 
     await prepare_artwork(meta)
 
     artwork = tmp_path / "tmp" / "discovered-artwork" / "artwork"
-    assert meta.artwork_path == str(artwork / "POSTER.jpg")
+    assert meta.artwork_path == str(artwork / "POSTER.png")
     assert meta.artwork_banner_path == str(artwork / "POSTER_BANNER.png")
     assert meta.artwork_url == ""
 
 
 @pytest.mark.asyncio
-async def test_music_keeps_valid_local_jpeg_without_png_conversion(tmp_path: Path) -> None:
-    album = tmp_path / "Invented Album"
-    album.mkdir()
-    cover = album / "cover.jpg"
-    image = Image.effect_noise((256, 256), 100).convert("RGB")
-    image.save(cover, "JPEG", quality=80)
-    png = BytesIO()
-    image.save(png, "PNG")
-    assert cover.stat().st_size < png.tell()
-    meta = Meta(category="MUSIC", base_dir=str(tmp_path), uuid="music-local-cover", path=str(album))
-    artwork = tmp_path / "tmp" / "music-local-cover" / "artwork"
-    artwork.mkdir(parents=True)
-    (artwork / "POSTER.png").write_bytes(b"invalid prior artifact")
-
-    with patch("src.artwork.MAX_ARTWORK_BYTES", (cover.stat().st_size + png.tell()) // 2):
-        await prepare_artwork(meta)
-        assert meta.artwork_path == str(artwork / "POSTER.jpg")
-        assert Path(meta.artwork_path).read_bytes() == cover.read_bytes()
-        assert not (artwork / "POSTER.png").exists()
-
-
-@pytest.mark.asyncio
-async def test_generic_artwork_converts_webp_when_jpeg_and_png_are_required(tmp_path: Path) -> None:
-    cover = tmp_path / "cover.webp"
-    Image.new("RGB", (32, 48), "yellow").save(cover, "WEBP")
-    meta = Meta(category="BOOK", base_dir=str(tmp_path), uuid="webp-cover", path=str(tmp_path))
+async def test_category_artwork_path_is_normalized_without_a_named_sidecar(
+    tmp_path: Path,
+) -> None:
+    extracted = tmp_path / "MUSIC_COVER.jpg"
+    Image.new("RGB", (32, 48), "purple").save(extracted)
+    meta = Meta(
+        base_dir=str(tmp_path),
+        uuid="extracted-artwork",
+        artwork_path=str(extracted),
+    )
 
     await prepare_artwork(meta)
 
-    assert Path(meta.artwork_path).name == "POSTER.png"
+    assert meta.artwork_path == str(
+        tmp_path / "tmp" / "extracted-artwork" / "artwork" / "POSTER.png"
+    )
     assert Image.open(meta.artwork_path).format == "PNG"
 
 
-@pytest.mark.asyncio
-async def test_category_artwork_path_is_normalized_without_a_named_sidecar(tmp_path: Path) -> None:
-    extracted = tmp_path / "MUSIC_COVER.jpg"
-    Image.new("RGB", (32, 48), "purple").save(extracted)
-    meta = Meta(base_dir=str(tmp_path), uuid="extracted-artwork", artwork_path=str(extracted))
-
-    await prepare_artwork(meta)
-
-    assert meta.artwork_path == str(tmp_path / "tmp" / "extracted-artwork" / "artwork" / "POSTER.jpg")
-    assert Image.open(meta.artwork_path).format == "JPEG"
-
-
-def test_imghost_cli_arg_takes_precedence_over_automatic_selection(tmp_path: Path) -> None:
-    meta, _, _ = Args({"DEFAULT": {"screens": 4, "img_host_1": "imgbox"}}).parse([str(tmp_path), "-ih", "imgbb"], Meta())
+def test_imghost_cli_arg_takes_precedence_over_automatic_selection(
+    tmp_path: Path,
+) -> None:
+    meta, _, _ = Args(
+        {"DEFAULT": {"screens": 4, "img_host_1": "imgbox"}}
+    ).parse([str(tmp_path), "-ih", "imgbb"], Meta())
 
     assert meta.imghost == "imgbb"
     assert meta.imghost_from_cli is True
 
 
 def test_invalid_cover_is_not_accepted() -> None:
-    from src.artwork import is_valid_cover_image
-
     assert not is_valid_cover_image(None)
 
 
-def test_local_artwork_discovery_does_not_read_media_files(tmp_path: Path) -> None:
+def test_local_artwork_discovery_does_not_read_media_files(
+    tmp_path: Path,
+) -> None:
     """The scan touches every file beside the release, so non-images must be
     skipped by suffix. Reading them would pull whole media files - hundreds of
     gigabytes over a network share - only to find they are not cover art."""
-    from src.artwork import _find_local_artwork_sources
-
     media_file = tmp_path / "Release.mkv"
     media_file.write_bytes(b"\x00" * 2048)
     (tmp_path / "Release.iso").write_bytes(b"\x00" * 2048)
 
-    with patch.object(Path, "read_bytes", side_effect=AssertionError("must not read a non-image")):
+    with patch.object(
+        Path,
+        "read_bytes",
+        side_effect=AssertionError("must not read a non-image"),
+    ):
         assert _find_local_artwork_sources(str(media_file)) == {}
 
 
-def test_oversized_image_is_rejected_without_being_read(tmp_path: Path) -> None:
-    from src.artwork import MAX_ARTWORK_BYTES, is_valid_cover_image
-
+def test_oversized_image_is_rejected_without_being_read(
+    tmp_path: Path,
+) -> None:
     oversized = tmp_path / "huge.png"
     oversized.write_bytes(b"\x00" * (MAX_ARTWORK_BYTES + 1))
 
-    with patch.object(Path, "read_bytes", side_effect=AssertionError("must not read an oversized file")):
+    with patch.object(
+        Path,
+        "read_bytes",
+        side_effect=AssertionError("must not read an oversized file"),
+    ):
         assert not is_valid_cover_image(oversized)
 
 
-def test_user_supplied_cover_without_extension_is_accepted(tmp_path: Path) -> None:
+def test_user_supplied_cover_without_extension_is_accepted(
+    tmp_path: Path,
+) -> None:
     """Paths the user provides explicitly are validated by content, not by name:
     a decodable image must not be rejected for lacking a known suffix."""
-    from src.artwork import is_valid_cover_image
-
     extensionless = tmp_path / "cover_no_extension"
     Image.new("RGB", (32, 48), "teal").save(extensionless, format="PNG")
 
@@ -347,27 +351,28 @@ def test_user_supplied_cover_without_extension_is_accepted(tmp_path: Path) -> No
 
 
 def test_empty_image_file_is_rejected(tmp_path: Path) -> None:
-    from src.artwork import is_valid_cover_image
-
     empty = tmp_path / "cover.png"
     empty.touch()
 
     assert not is_valid_cover_image(empty)
 
 
-def test_valid_cover_within_size_limit_is_still_accepted(tmp_path: Path) -> None:
-    from src.artwork import is_valid_cover_image
-
+def test_valid_cover_within_size_limit_is_still_accepted(
+    tmp_path: Path,
+) -> None:
     cover_file = tmp_path / "cover.png"
     Image.new("RGB", (32, 48), "blue").save(cover_file)
 
     assert is_valid_cover_image(cover_file)
+    assert not audiobook_cover_missing_or_invalid(
+        Meta(audiobook=True, artwork_path=str(cover_file))
+    )
+    assert audiobook_cover_missing_or_invalid(Meta(audiobook=True))
+    assert not audiobook_cover_missing_or_invalid(Meta(audiobook=False))
 
 
 def test_local_artwork_discovery_skips_media_files(tmp_path: Path) -> None:
     """The scan must still find the cover while ignoring the media beside it."""
-    from src.artwork import _find_local_artwork_sources
-
     media_file = tmp_path / "Release.mkv"
     media_file.write_bytes(b"\x00" * 4096)
     (tmp_path / "Release.iso").write_bytes(b"\x00" * 4096)
@@ -380,10 +385,17 @@ def test_local_artwork_discovery_skips_media_files(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_unit3d_attaches_only_a_decodable_book_cover(tmp_path: Path) -> None:
+async def test_unit3d_attaches_only_a_decodable_book_cover(
+    tmp_path: Path,
+) -> None:
     cover_file = tmp_path / "cover.png"
     Image.new("RGB", (32, 48), "green").save(cover_file)
-    meta = Meta(category="BOOK", base_dir=str(tmp_path), uuid="book-1", artwork_path=str(cover_file))
+    meta = Meta(
+        category="BOOK",
+        base_dir=str(tmp_path),
+        uuid="book-1",
+        artwork_path=str(cover_file),
+    )
     tracker = UNIT3D({"DEFAULT": {}, "TRACKERS": {"TEST": {}}}, "TEST")
 
     files = await tracker.get_additional_files(meta)
@@ -397,53 +409,24 @@ async def test_unit3d_attaches_only_a_decodable_book_cover(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
-async def test_prompt_music_meta_offers_conflicting_years_in_the_web_ui() -> None:
+async def test_unit3d_cover_size_gap_is_fail_closed(tmp_path: Path) -> None:
+    cover_file = tmp_path / "large-cover.png"
+    Image.new("RGB", (32, 48), "green").save(cover_file)
+    target_size = 5 * 1024 * 1024 + 1024
+    with cover_file.open("ab") as output:
+        output.write(b"\0" * (target_size - cover_file.stat().st_size))
+
+    assert is_valid_cover_image(cover_file)
+
     meta = Meta(
-        category="MUSIC",
-        artist="Test Artist",
-        title="Test Album",
-        source="WEB",
-        artwork_url="https://example.invalid/cover.jpg",
-        music_release={
-            "fields": {"year": {"value": 2026, "source": "file_tag"}, "release_type": {"value": "Single"}},
-            "conflicts": {"year": ["2026", "2019", "not a year"]},
-        },
-    )
-    contexts = []
-
-    def ask_string(_question):
-        contexts.append(webui_events._prompt_context.get())
-        return ""
-
-    with patch("upload.CLI_UI.ask_string", side_effect=ask_string):
-        await _prompt_music_meta(meta)
-
-    (context,) = contexts
-    assert context["kind"] == "field"
-    assert context["focus"] == "Year"
-    assert context["summary"]["Album"] == "Test Album"
-    assert context["actions"] == [("", "Keep 2026"), ("2019", "2019")]
-    assert "file tag" in context["hint"]
-
-
-@pytest.mark.asyncio
-async def test_provider_poster_and_banner_links_are_downloaded(tmp_path: Path) -> None:
-    source = tmp_path / "source.jpg"
-    Image.new("RGB", (64, 32), "blue").save(source)
-    meta = Meta(
+        category="BOOK",
+        audiobook=True,
         base_dir=str(tmp_path),
-        uuid="xxx-artwork",
-        category="XXX",
-        artwork_download_url="https://cdn.example/poster?sig=1",
-        artwork_banner_url="https://cdn.example/banner.jpg",
+        uuid="book-large-cover",
+        artwork_path=str(cover_file),
     )
-    download = AsyncMock(return_value=source.read_bytes())
+    tracker = UNIT3D({"DEFAULT": {}, "TRACKERS": {"TEST": {}}}, "TEST")
 
-    with patch("src.artwork.is_public_http_url", return_value=True), patch("src.artwork.download_public_image", new=download):
-        await prepare_artwork(meta)
+    files = await tracker.get_additional_files(meta)
 
-    assert [call.args[0] for call in download.await_args_list] == ["https://cdn.example/poster?sig=1", "https://cdn.example/banner.jpg"]
-    assert Path(meta.artwork_path).is_file()
-    assert meta.artwork_banner_path and Path(meta.artwork_banner_path).is_file()
-    # A link only meant for downloading is never published.
-    assert meta.artwork_url == ""
+    assert "torrent-cover" not in files

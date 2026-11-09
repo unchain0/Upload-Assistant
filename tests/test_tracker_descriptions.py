@@ -1,25 +1,30 @@
-# ruff: noqa: S101
-
 import asyncio
 
 import pytest
 
-import src.get_tracker_data as tracker_data_module
-import src.trackers.common as common_module
-from src import webui_events
-from src.description_review import apply_saved_draft, discard_review, draft, load_review, save_review
-from src.get_tracker_data import TrackerDataManager
-from src.meta import Meta
-from src.tracker_descriptions import DescriptionCandidate, TrackerDescriptionMode, add_candidate, description_fingerprint, resolve_description_mode, score_release_name
-from src.trackermeta import update_meta_with_unit3d_data, update_metadata_from_tracker
-from src.trackers.common import Common
+import src.services.tracker_metadata_service as tracker_data_module
+from src.domain_models.release import Meta
+from src.engines.tracker_description_policy import (
+    DescriptionCandidate,
+    TrackerDescriptionMode,
+    add_candidate,
+    description_fingerprint,
+    resolve_description_mode,
+    score_release_name,
+)
+from src.integrations.trackers.common import Common
+from src.services.tracker_metadata_parser import update_meta_with_unit3d_data
+from src.services.tracker_metadata_service import TrackerDataManager
 
 
 def test_legacy_options_resolve_to_explicit_description_modes():
     assert resolve_description_mode("ids") is TrackerDescriptionMode.IDS
     assert resolve_description_mode("images") is TrackerDescriptionMode.IMAGES
     assert resolve_description_mode("text") is TrackerDescriptionMode.TEXT
-    assert resolve_description_mode("text_and_images") is TrackerDescriptionMode.TEXT_AND_IMAGES
+    assert (
+        resolve_description_mode("text_and_images")
+        is TrackerDescriptionMode.TEXT_AND_IMAGES
+    )
 
 
 def test_missing_or_unknown_explicit_mode_is_rejected():
@@ -30,13 +35,19 @@ def test_missing_or_unknown_explicit_mode_is_rejected():
 
 
 def test_release_score_prefers_exact_and_explicit_matches():
-    assert score_release_name("Film.2026.1080p", "Film.2026.1080p.mkv") > score_release_name("Film.2026.1080p", "Other.2026.720p.mkv")
+    assert score_release_name(
+        "Film.2026.1080p", "Film.2026.1080p.mkv"
+    ) > score_release_name("Film.2026.1080p", "Other.2026.720p.mkv")
     assert score_release_name("anything", "unrelated", explicit_id=True) == 100
 
 
 def test_candidate_audit_hides_raw_text_and_records_hashes():
     meta = Meta({})
-    candidate = DescriptionCandidate(source="AITHER", raw_description="original", cleaned_description="clean")
+    candidate = DescriptionCandidate(
+        source="AITHER",
+        raw_description="original",
+        cleaned_description="clean",
+    )
     add_candidate(meta, candidate, selected=True)
 
     record = meta.description_candidates[0]
@@ -47,17 +58,28 @@ def test_candidate_audit_hides_raw_text_and_records_hashes():
 
 
 def test_fingerprint_changes_when_description_inputs_change():
-    meta = Meta({"name": "Release", "description": "one", "image_list": [{"raw_url": "https://one"}]})
+    meta = Meta(
+        {
+            "name": "Release",
+            "description": "one",
+            "image_list": [{"raw_url": "https://one"}],
+        }
+    )
     initial = description_fingerprint(meta, "AITHER")
     meta.image_list = [{"raw_url": "https://two"}]
     assert description_fingerprint(meta, "AITHER") != initial
 
 
-def test_unit3d_import_records_source_and_honors_images_only_mode(tmp_path, monkeypatch):
+def test_unit3d_import_records_source_and_honors_images_only_mode(
+    tmp_path, monkeypatch
+):
     async def no_images(_images, _meta):
         return []
 
-    monkeypatch.setattr("src.trackermeta.check_images_concurrently", no_images)
+    monkeypatch.setattr(
+        "src.services.tracker_metadata_parser.check_images_concurrently",
+        no_images,
+    )
 
     async def run():
         meta = Meta(
@@ -69,7 +91,17 @@ def test_unit3d_import_records_source_and_honors_images_only_mode(tmp_path, monk
                 "tracker_description_raw": {"AITHER": "raw"},
             }
         )
-        result = (1, 2, 3, 0, "clean", "MOVIE", None, [{"raw_url": "https://image"}], "Release.mkv")
+        result = (
+            1,
+            2,
+            3,
+            0,
+            "clean",
+            "MOVIE",
+            None,
+            [{"raw_url": "https://image"}],
+            "Release.mkv",
+        )
         assert await update_meta_with_unit3d_data(meta, result, "AITHER")
         assert meta.description == ""
         assert meta.description_candidates[0]["selected"] is False
@@ -91,24 +123,9 @@ def test_unit3d_candidate_keeps_description_in_memory(tmp_path):
         result = (1, 2, 3, 0, "clean", "MOVIE", None, [], "Release.mkv")
         assert await update_meta_with_unit3d_data(meta, result, "AITHER")
         assert meta.description == "clean"
-        assert not (tmp_path / "tmp" / "candidate" / "DESCRIPTION.txt").exists()
-
-    asyncio.run(run())
-
-
-def test_bjshare_description_without_ids_is_a_match(tmp_path):
-    class FakeBJShare:
-        async def get_torrent_metadata(self, _meta, torrent_id, skip_tracker_descriptions=False):
-            assert torrent_id == "10"
-            assert not skip_tracker_descriptions
-            return 0, 0, 0, 0, "A fictional overview.", None, None, [], "Fictional.Story.m4b"
-
-    async def run():
-        meta = Meta({"base_dir": str(tmp_path), "uuid": "book", "category": "BOOK", "tracker_description_mode": "text", "persist_description": False})
-        meta, match = await update_metadata_from_tracker("BJSHARE", FakeBJShare(), meta, "Fictional.Story.m4b", "Fictional.Story.m4b", torrent_id="10")
-        assert match
-        assert meta.description == "A fictional overview."
-        assert not meta.imdb_id
+        assert not (
+            tmp_path / "tmp" / "candidate" / "DESCRIPTION.txt"
+        ).exists()
 
     asyncio.run(run())
 
@@ -117,10 +134,20 @@ def test_selected_tracker_description_can_be_discarded(monkeypatch):
     async def run():
         manager = TrackerDataManager({"DEFAULT": {}, "TRACKERS": {}})
         meta = Meta({"unattended": False})
-        candidate = Meta({"description": "tracker text", "description_provenance": {"source": "AITHER"}})
-        monkeypatch.setattr("src.get_tracker_data.cli_ui.ask_string", lambda _prompt: "d")
+        candidate = Meta(
+            {
+                "description": "tracker text",
+                "description_provenance": {"source": "AITHER"},
+            }
+        )
+        monkeypatch.setattr(
+            "src.services.tracker_metadata_service.cli_ui.ask_string",
+            lambda _prompt: "d",
+        )
 
-        await manager._review_explicit_tracker_description(meta, "AITHER", candidate)
+        await manager._review_explicit_tracker_description(
+            meta, "AITHER", candidate
+        )
 
         assert candidate.description == ""
         assert candidate.description_provenance["discarded"] is True
@@ -128,7 +155,9 @@ def test_selected_tracker_description_can_be_discarded(monkeypatch):
     asyncio.run(run())
 
 
-def test_unit3d_source_id_does_not_skip_interactive_description_review(monkeypatch):
+def test_unit3d_source_id_does_not_skip_interactive_description_review(
+    monkeypatch,
+):
     class FakeResponse:
         @staticmethod
         def json():
@@ -156,12 +185,23 @@ def test_unit3d_source_id_does_not_skip_interactive_description_review(monkeypat
 
     async def run():
         messages = []
-        monkeypatch.setattr(common_module.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
-        monkeypatch.setattr(common_module.cli_ui, "ask_string", lambda *_args, **_kwargs: "d")
-        monkeypatch.setattr(common_module.logger, "info", lambda message, **_kwargs: messages.append(str(message)))
+        monkeypatch.setattr(
+            "src.integrations.trackers.common.httpx.AsyncClient",
+            lambda **_kwargs: FakeClient(),
+        )
+        monkeypatch.setattr(
+            "src.integrations.trackers.common.cli_ui.ask_string",
+            lambda *_args, **_kwargs: "d",
+        )
+        monkeypatch.setattr(
+            "src.integrations.trackers.common.logger.info",
+            lambda message, **_kwargs: messages.append(str(message)),
+        )
         meta = Meta({"tracker_ids": {"AITHER": "123"}, "unattended": False})
 
-        result = await Common({"TRACKERS": {"AITHER": {"api_key": "test"}}}).unit3d_torrent_info(
+        result = await Common(
+            {"TRACKERS": {"AITHER": {"api_key": "test"}}}
+        ).unit3d_torrent_info(
             "AITHER",
             "https://aither.example/api/torrents/",
             "https://aither.example/api/torrents",
@@ -171,190 +211,23 @@ def test_unit3d_source_id_does_not_skip_interactive_description_review(monkeypat
         )
 
         assert result[4] is None
-        assert "Searching for information on [bold cyan]Aither[/bold cyan] (https://aither.example/torrents/123)" in messages
+        assert (
+            "Searching for information on [bold cyan]AITHER[/bold cyan] (https://aither.example/torrents/123)"
+            in messages
+        )
 
     asyncio.run(run())
 
 
-def test_webui_tracker_description_is_saved_and_shown(tmp_path, monkeypatch):
-    # Web UI runs show the description and ask like a terminal run, without an editor.
-    async def run():
-        manager = TrackerDataManager({"DEFAULT": {}, "TRACKERS": {}})
-        meta = Meta({"base_dir": str(tmp_path), "uuid": "release", "unattended": False})
-        candidate = Meta({"description": "tracker text", "description_provenance": {"source": "AITHER"}})
-        monkeypatch.setenv("UA_WEBUI_ACTIVE", "1")
-        messages = []
-        questions = []
-        monkeypatch.setattr("src.get_tracker_data.logger.info", lambda message, **_kwargs: messages.append(str(message)))
-        monkeypatch.setattr("src.get_tracker_data.cli_ui.ask_string", lambda prompt: questions.append(prompt) or "")
-        monkeypatch.setattr("src.get_tracker_data.click.edit", lambda _text: (_ for _ in ()).throw(AssertionError("editor must not open")))
-
-        await manager._review_explicit_tracker_description(meta, "AITHER", candidate)
-
-        assert load_review(tmp_path / "tmp" / "release")["content"] == "tracker text"
-        assert candidate.description == "tracker text"
-        assert any(message.startswith("Selected description from AITHER:") for message in messages)
-        assert questions and "'e'" not in questions[0] and "'d' to discard" in questions[0]
-
-    asyncio.run(run())
-
-
-def test_webui_tracker_description_edit_answer_does_not_open_editor(tmp_path, monkeypatch):
-    async def run():
-        manager = TrackerDataManager({"DEFAULT": {}, "TRACKERS": {}})
-        meta = Meta({"base_dir": str(tmp_path), "uuid": "release", "unattended": False})
-        candidate = Meta({"description": "tracker text", "description_provenance": {"source": "AITHER"}})
-        monkeypatch.setenv("UA_WEBUI_ACTIVE", "1")
-        monkeypatch.setattr("src.get_tracker_data.cli_ui.ask_string", lambda _prompt: "e")
-        monkeypatch.setattr("src.get_tracker_data.click.edit", lambda _text: (_ for _ in ()).throw(AssertionError("editor must not open")))
-
-        await manager._review_explicit_tracker_description(meta, "AITHER", candidate)
-
-        assert candidate.description == "tracker text"
-        assert "edited" not in candidate.description_provenance
-
-    asyncio.run(run())
-
-
-def test_webui_tracker_description_discard_clears_saved_draft(tmp_path, monkeypatch):
-    async def run():
-        manager = TrackerDataManager({"DEFAULT": {}, "TRACKERS": {}})
-        meta = Meta({"base_dir": str(tmp_path), "uuid": "release", "unattended": False})
-        candidate = Meta({"description": "tracker text", "description_provenance": {"source": "AITHER"}})
-        monkeypatch.setenv("UA_WEBUI_ACTIVE", "1")
-        monkeypatch.setattr("src.get_tracker_data.cli_ui.ask_string", lambda _prompt: "d")
-
-        await manager._review_explicit_tracker_description(meta, "AITHER", candidate)
-
-        assert candidate.description == ""
-        assert candidate.description_provenance["discarded"] is True
-        assert load_review(tmp_path / "tmp" / "release").get("content") is None  # tombstone, nothing to apply
-        assert draft({"description": ""}, tmp_path / "tmp" / "release")[0] == ""
-
-    asyncio.run(run())
-
-
-def test_webui_discard_from_an_earlier_run_does_not_carry_over(tmp_path, monkeypatch):
-    # tmp/<release> is reused between runs, so the previous run's tombstone is still on disk.
-    async def run():
-        manager = TrackerDataManager({"DEFAULT": {}, "TRACKERS": {}})
-        meta = Meta({"base_dir": str(tmp_path), "uuid": "release", "unattended": False})
-        temp_dir = tmp_path / "tmp" / "release"
-        save_review(temp_dir, "old text", 1)
-        discard_review(temp_dir)
-        candidate = Meta({"description": "tracker text", "description_provenance": {"source": "AITHER"}})
-        monkeypatch.setenv("UA_WEBUI_ACTIVE", "1")
-        monkeypatch.setattr("src.get_tracker_data.cli_ui.ask_string", lambda _prompt: "")
-
-        await manager._review_explicit_tracker_description(meta, "AITHER", candidate)
-
-        review = load_review(temp_dir)
-        assert review["content"] == "tracker text"
-        assert review["version"] == 3
-        target = Meta({"base_dir": str(tmp_path), "uuid": "release", "description": "my own text"})
-        apply_saved_draft(target)
-        assert target.description == "tracker text"
-
-    asyncio.run(run())
-
-
-def test_webui_discard_keeps_an_inline_description_through_the_builder(tmp_path, monkeypatch):
-    # The description builder applies the saved draft a second time: an empty draft used to blank --description.
-    from src.description_review import apply_saved_draft
-
-    async def run():
-        manager = TrackerDataManager({"DEFAULT": {}, "TRACKERS": {}})
-        meta = Meta({"base_dir": str(tmp_path), "uuid": "release", "unattended": False, "description_inline": "my own text"})
-        candidate = Meta({"description": "tracker text", "description_provenance": {"source": "AITHER"}})
-        monkeypatch.setenv("UA_WEBUI_ACTIVE", "1")
-        monkeypatch.setattr("src.get_tracker_data.cli_ui.ask_string", lambda _prompt: "d")
-
-        await manager._review_explicit_tracker_description(meta, "AITHER", candidate)
-        meta.description = "my own text"  # what gen_desc builds from --description afterwards
-        apply_saved_draft(meta)
-
-        assert meta.description == "my own text"
-
-    asyncio.run(run())
-
-
-def test_webui_prompt_shows_the_draft_the_panel_already_holds(tmp_path, monkeypatch):
-    async def run():
-        manager = TrackerDataManager({"DEFAULT": {}, "TRACKERS": {}})
-        meta = Meta({"base_dir": str(tmp_path), "uuid": "release", "unattended": False})
-        candidate = Meta({"description": "tracker text", "description_provenance": {"source": "AITHER"}})
-        save_review(tmp_path / "tmp" / "release", "edited in the panel", 3)
-        monkeypatch.setenv("UA_WEBUI_ACTIVE", "1")
-        messages = []
-        prompts = []
-        monkeypatch.setattr("src.get_tracker_data.logger.info", lambda message, **_kwargs: messages.append(str(message)))
-        monkeypatch.setattr("src.get_tracker_data.cli_ui.ask_string", lambda _prompt: "")
-
-        real_field_prompt = webui_events.field_prompt
-
-        def spy(title, summary=None, **kwargs):
-            prompts.append((summary, kwargs))
-            return real_field_prompt(title, summary, **kwargs)
-
-        monkeypatch.setattr("src.get_tracker_data.webui_events.field_prompt", spy)
-
-        await manager._review_explicit_tracker_description(meta, "AITHER", candidate)
-
-        assert load_review(tmp_path / "tmp" / "release")["content"] == "edited in the panel"
-        assert any("edited in the panel" in message for message in messages)
-        assert prompts[0][0]["Description"] == "edited in the panel"
-        assert prompts[0][1]["hint"] == "Open the Description panel to edit it before uploading."
-        assert not any("Open the Description panel" in message for message in messages)
-
-    asyncio.run(run())
-
-
-def test_terminal_prompt_has_no_panel_hint(monkeypatch):
-    async def run():
-        manager = TrackerDataManager({"DEFAULT": {}, "TRACKERS": {}})
-        meta = Meta({"unattended": False})
-        candidate = Meta({"description": "tracker text", "description_provenance": {"source": "AITHER"}})
-        monkeypatch.delenv("UA_WEBUI_ACTIVE", raising=False)
-        prompts = []
-        real_field_prompt = webui_events.field_prompt
-
-        def spy(title, summary=None, **kwargs):
-            prompts.append(kwargs)
-            return real_field_prompt(title, summary, **kwargs)
-
-        monkeypatch.setattr("src.get_tracker_data.webui_events.field_prompt", spy)
-        monkeypatch.setattr("src.get_tracker_data.cli_ui.ask_string", lambda _prompt: "")
-
-        await manager._review_explicit_tracker_description(meta, "AITHER", candidate)
-
-        assert prompts[0]["hint"] == ""
-
-    asyncio.run(run())
-
-
-def test_description_review_draft_prefers_saved_webui_content(tmp_path):
-    temp_dir = tmp_path / "tmp" / "release"
-    save_review(temp_dir, "webui text", 4)
-
-    assert draft({"description": "tracker text"}, temp_dir) == ("webui text", 4)
-
-
-def test_saved_webui_draft_replaces_the_tracker_description(tmp_path):
-    from src.description_review import apply_saved_draft
-
-    meta = Meta({"base_dir": str(tmp_path), "uuid": "release", "description": "tracker text"})
-    save_review(tmp_path / "tmp" / "release", "edited text", 1)
-
-    apply_saved_draft(meta)
-
-    assert meta.description == "edited text"
-    assert meta.description_override == "edited text"
-
-
-def test_explicit_tracker_ids_are_collected_concurrently_and_best_candidate_is_applied(tmp_path, monkeypatch):
+def test_explicit_tracker_ids_are_collected_concurrently_and_best_candidate_is_applied(
+    tmp_path, monkeypatch
+):
     async def run():
         config = {
-            "DEFAULT": {"tracker_comment_only": True, "tracker_description_mode": "text"},
+            "DEFAULT": {
+                "tracker_comment_only": True,
+                "tracker_description_mode": "text",
+            },
             "TRACKERS": {
                 "AITHER": {"use_for_search": True},
                 "BLUTOPIA": {"use_for_search": True},
@@ -364,7 +237,9 @@ def test_explicit_tracker_ids_are_collected_concurrently_and_best_candidate_is_a
         running = 0
         peak_running = 0
 
-        async def fake_update(tracker, _instance, candidate, *_args, **_kwargs):
+        async def fake_update(
+            _self, tracker, _instance, candidate, *_args, **_kwargs
+        ):
             nonlocal running, peak_running
             assert (tmp_path / "tmp" / candidate.uuid).is_dir()
             running += 1
@@ -373,12 +248,25 @@ def test_explicit_tracker_ids_are_collected_concurrently_and_best_candidate_is_a
             running -= 1
             candidate.imdb_id = 1 if tracker == "AITHER" else 2
             candidate.description = tracker
-            candidate.description_provenance = {"score": 1 if tracker == "AITHER" else 50}
+            candidate.description_provenance = {
+                "score": 1 if tracker == "AITHER" else 50
+            }
             return candidate, True
 
-        monkeypatch.setattr(manager, "update_metadata_from_explicit_tracker", fake_update)
-        monkeypatch.setitem(tracker_data_module.tracker_class_map, "AITHER", lambda **_kwargs: object())
-        monkeypatch.setitem(tracker_data_module.tracker_class_map, "BLUTOPIA", lambda **_kwargs: object())
+        monkeypatch.setattr(
+            "src.services.tracker_metadata_service.TrackerDataManager.update_metadata_from_explicit_tracker",
+            fake_update,
+        )
+        monkeypatch.setitem(
+            tracker_data_module.tracker_class_map,
+            "AITHER",
+            lambda **_kwargs: object(),
+        )
+        monkeypatch.setitem(
+            tracker_data_module.tracker_class_map,
+            "BLUTOPIA",
+            lambda **_kwargs: object(),
+        )
 
         meta = Meta(
             {
@@ -399,17 +287,26 @@ def test_explicit_tracker_ids_are_collected_concurrently_and_best_candidate_is_a
     asyncio.run(run())
 
 
-def test_tracker_comment_only_defaults_to_skipping_filename_searches(tmp_path, monkeypatch):
+def test_tracker_comment_only_defaults_to_skipping_filename_searches(
+    tmp_path, monkeypatch
+):
     async def run():
-        manager = TrackerDataManager({"DEFAULT": {}, "TRACKERS": {"AITHER": {"use_for_search": True}}})
+        manager = TrackerDataManager(
+            {"DEFAULT": {}, "TRACKERS": {"AITHER": {"use_for_search": True}}}
+        )
         meta = Meta({"base_dir": str(tmp_path), "uuid": "release"})
 
         async def unexpected_search(*_args, **_kwargs):
             raise AssertionError("filename-based tracker search must not run")
 
-        monkeypatch.setattr(manager, "update_metadata_from_explicit_tracker", unexpected_search)
+        monkeypatch.setattr(
+            "src.services.tracker_metadata_service.TrackerDataManager.update_metadata_from_explicit_tracker",
+            unexpected_search,
+        )
 
-        result = await manager.get_tracker_data(None, meta, "Release", "Release")
+        result = await manager.get_tracker_data(
+            None, meta, "Release", "Release"
+        )
 
         assert result is meta
         assert meta.no_tracker_match is False

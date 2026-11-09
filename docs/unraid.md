@@ -84,7 +84,7 @@ This would work on any os where you can use docker compose but i will focus on u
 
 For this i had used Dockge. You can read more about it here https://github.com/louislam/dockge, but you can use any way you'd like to do docker-compose. There are plugins for it on the CA appstore or you can use cli. In this guide i will only cover Dockge.
 
-The installation is quite simple, just pull the Dockge container from CA. and login to the WebUI.
+The installation is quite simple, just pull the Dockge container from CA. and sign in to the Dockge dashboard.
 
 On the homepage, you'll see a massive + button to add a compose file.
 

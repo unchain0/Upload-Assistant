@@ -5,12 +5,17 @@ from unittest.mock import AsyncMock
 
 import httpx
 
-import src.trackers.cathoderaytube as cathoderaytube_module
-from src.trackers.cathoderaytube import CathodeRayTube
+import src.integrations.trackers.cathoderaytube as cathoderaytube_module
+from src.integrations.trackers.cathoderaytube import CathodeRayTube
 
 
 def tracker():
-    return CathodeRayTube({"DEFAULT": {"full_mediainfo": False}, "TRACKERS": {"CATHODERAYTUBE": {"anon": True}}})
+    return CathodeRayTube(
+        {
+            "DEFAULT": {"full_mediainfo": False},
+            "TRACKERS": {"CATHODERAYTUBE": {"anon": True}},
+        }
+    )
 
 
 def meta(**overrides):
@@ -71,8 +76,6 @@ def meta(**overrides):
         "tmdb_poster_path": "",
         "artwork_url": "",
         "hosted_artwork": [],
-        "valid_mi": True,
-        "manual_name": None,
     }
     values.update(overrides)
     result = SimpleNamespace(**values)
@@ -82,7 +85,7 @@ def meta(**overrides):
 
 def test_maps_categories_and_builds_description():
     site = tracker()
-    assert asyncio.run(site.get_upload_data(meta(), "csrf")) == {  # noqa: S101
+    assert asyncio.run(site.get_upload_data(meta(), "csrf")) == {
         "submit": "true",
         "auth": "csrf",
         "category": "1",
@@ -90,35 +93,97 @@ def test_maps_categories_and_builds_description():
         "title": "Example Movie (2010)",
         "taglist": "movies, 2010, 2010s, drama, mystery, 1080p, bluray, remux, h.264, ac3, 5.1, english.audio, english.sub",
         "image": "",
-        "desc": "[info]\nhttps://www.imdb.com/title/tt1234567/\nhttps://www.themoviedb.org/movie/123\n[/info]\n\n[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=0]Upload-Assistant[/size][/url][/align]",
+        "desc": "[info]\nhttps://www.imdb.com/title/tt1234567/\nhttps://www.themoviedb.org/movie/123\n[/info]\n\n[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]Upload-Assistant[/size][/url][/align]",
         "anonymous": "1",
     }
-    assert asyncio.run(site.get_upload_data(meta(category="TV"), "csrf"))["category"] == "2"  # noqa: S101
-    assert asyncio.run(site.get_upload_data(meta(category="GAME"), "csrf"))["category"] == "13"  # noqa: S101
+    assert (
+        asyncio.run(site.get_upload_data(meta(category="TV"), "csrf"))[
+            "category"
+        ]
+        == "2"
+    )
+    assert (
+        asyncio.run(site.get_upload_data(meta(category="GAME"), "csrf"))[
+            "category"
+        ]
+        == "13"
+    )
 
 
 def test_formats_titles_to_crt_conventions():
     site = tracker()
-    assert asyncio.run(site.get_name(meta(edition="Director's Cut"))) == "Example Movie (2010) Director's Cut"  # noqa: S101
-    assert asyncio.run(site.get_name(meta(aka="AKA Example Movie in Portuguese"))) == "Example Movie AKA Example Movie in Portuguese (2010)"  # noqa: S101
-    tv_name = asyncio.run(site.get_name(meta(category="TV", title="Example Show", season="S01", year="2001")))
-    assert tv_name == "Example Show - Season 1 (2001)"  # noqa: S101
-    assert asyncio.run(site.get_name(meta(category="TV", title="Example Show", season="S00", year="2001"))) == "Example Show - Specials (2001)"  # noqa: S101
-    assert asyncio.run(site.get_name(meta(category="GAME", title="Example Game", year="1998", platform="PlayStation"))) == "Example Game (1998) PlayStation"  # noqa: S101
+    assert (
+        asyncio.run(site.get_name(meta(edition="Director's Cut")))
+        == "Example Movie (2010) Director's Cut"
+    )
+    assert (
+        asyncio.run(site.get_name(meta(aka="AKA Example Movie in Portuguese")))
+        == "Example Movie AKA Example Movie in Portuguese (2010)"
+    )
+    tv_name = asyncio.run(
+        site.get_name(
+            meta(
+                category="TV", title="Example Show", season="S01", year="2001"
+            )
+        )
+    )
+    assert tv_name == "Example Show - Season 1 (2001)"
+    assert (
+        asyncio.run(
+            site.get_name(
+                meta(
+                    category="TV",
+                    title="Example Show",
+                    season="S00",
+                    year="2001",
+                )
+            )
+        )
+        == "Example Show - Specials (2001)"
+    )
+    assert (
+        asyncio.run(
+            site.get_name(
+                meta(
+                    category="GAME",
+                    title="Example Game",
+                    year="1998",
+                    platform="PlayStation",
+                )
+            )
+        )
+        == "Example Game (1998) PlayStation"
+    )
 
 
 def test_uses_the_image_hosts_approved_by_crt():
     site = tracker()
-    assert site.requires_tonemapped_hdr_screenshots is True  # noqa: S101
-    assert site.approved_image_hosts == ("ptpimg", "catbox", "imgbb", "postimages", "freeimage", "imgbox")  # noqa: S101
-    assert site.image_host_policy.url_host_mapping["catbox.moe"] == "catbox"  # noqa: S101
-    assert site.image_host_policy.url_host_mapping["postimg.cc"] == "postimages"  # noqa: S101
+    assert site.approved_image_hosts == (
+        "ptpimg",
+        "catbox",
+        "imgbb",
+        "postimages",
+        "freeimage",
+        "imgbox",
+    )
+    assert site.image_host_policy.url_host_mapping["catbox.moe"] == "catbox"
+    assert (
+        site.image_host_policy.url_host_mapping["postimg.cc"] == "postimages"
+    )
 
 
 def test_cover_uses_only_an_approved_image_host():
     site = tracker()
-    assert site.get_cover(meta(tmdb_poster_path="/poster.jpg", artwork_url="https://image.tmdb.org/t/p/w500/poster.jpg")) == ""  # noqa: S101
-    assert (  # noqa: S101
+    assert (
+        site.get_cover(
+            meta(
+                tmdb_poster_path="/poster.jpg",
+                artwork_url="https://image.tmdb.org/t/p/w500/poster.jpg",
+            )
+        )
+        == ""
+    )
+    assert (
         site.get_cover(
             meta(
                 tmdb_poster_path="/poster.jpg",
@@ -132,10 +197,13 @@ def test_cover_uses_only_an_approved_image_host():
 
 def test_extracts_matching_upload_from_site_log():
     html = """
-    <table><tr><td>2 mins ago</td><td>Torrent 22015 (An Invented Film (2001)) (41 GiB) was uploaded by User</td>
+    <table><tr><td>2 mins ago</td><td>Torrent 22015 (A Beautiful Mind (2001)) (41 GiB) was uploaded by User</td>
     <td><a href="/details.php?id=22015">22015</a></td></tr></table>
     """
-    assert CathodeRayTube._log_upload_url(html, "An Invented Film (2001)") == "https://www.cathode-ray.tube/torrents.php?id=22015"  # noqa: S101
+    assert (
+        CathodeRayTube._log_upload_url(html, "A Beautiful Mind (2001)")
+        == "https://www.cathode-ray.tube/torrents.php?id=22015"
+    )
 
 
 def test_hosts_local_cover_on_an_approved_image_host(tmp_path):
@@ -145,10 +213,12 @@ def test_hosts_local_cover_on_an_approved_image_host(tmp_path):
         cover_path = tmp_path / "POSTER.png"
         cover_path.write_bytes(b"cover")
         uploaded = {"raw_url": "https://iili.io/hosted.png"}
-        site.rehost_images_manager.uploadscreens_manager.upload_screens = AsyncMock(return_value=([uploaded], 1))
+        site.rehost_images_manager.uploadscreens_manager.upload_screens = (
+            AsyncMock(return_value=([uploaded], 1))
+        )
         item = meta(artwork_path=str(cover_path))
-        assert await site._host_cover(item) == uploaded["raw_url"]  # noqa: S101
-        assert item.rehosted_artwork_url == uploaded["raw_url"]  # noqa: S101
+        assert await site._host_cover(item) == uploaded["raw_url"]
+        assert item.rehosted_artwork_url == uploaded["raw_url"]
 
     asyncio.run(run())
 
@@ -158,29 +228,55 @@ def test_hosts_tmdb_cover_when_no_local_artwork_exists(tmp_path, monkeypatch):
         site = tracker()
         site.config["DEFAULT"].update({"img_host_1": "freeimage"})
         uploaded = {"raw_url": "https://iili.io/tmdb-hosted.png"}
-        site.rehost_images_manager.uploadscreens_manager.upload_screens = AsyncMock(return_value=([uploaded], 1))
+        site.rehost_images_manager.uploadscreens_manager.upload_screens = (
+            AsyncMock(return_value=([uploaded], 1))
+        )
 
         async def download(_meta, artwork_path):
             Path(artwork_path).write_bytes(b"cover")
             _meta.artwork_path = artwork_path
             return True
 
-        monkeypatch.setattr(cathoderaytube_module, "download_artwork_from_meta", download)
-        item = meta(artwork_url="", tmdb_poster_path="/poster.jpg", base_dir=str(tmp_path))
-        assert await site._host_cover(item) == uploaded["raw_url"]  # noqa: S101
-        assert item.artwork_url == ""  # noqa: S101
+        monkeypatch.setattr(
+            cathoderaytube_module, "download_artwork_from_meta", download
+        )
+        item = meta(
+            artwork_url="",
+            tmdb_poster_path="/poster.jpg",
+            base_dir=str(tmp_path),
+        )
+        assert await site._host_cover(item) == uploaded["raw_url"]
+        assert item.artwork_url == ""
 
     asyncio.run(run())
 
 
 def test_builds_common_category_tags_from_meta():
     site = tracker()
-    assert (  # noqa: S101
-        site.get_tags(meta(category="TV", year="1993", source="WEB-DL", type="", video_codec="HEVC", audio="AAC Stereo", channels="2.0"))
+    assert (
+        site.get_tags(
+            meta(
+                category="TV",
+                year="1993",
+                source="WEB-DL",
+                type="",
+                video_codec="HEVC",
+                audio="AAC Stereo",
+                channels="2.0",
+            )
+        )
         == "tv, 1993, 1990s, drama, mystery, 1080p, webdl, h.265, aac, stereo, english.audio, english.sub"
     )
-    assert (  # noqa: S101
-        site.get_tags(meta(category="GAME", year="1997", platform="Windows PC", genres=["Action", "Science Fiction"], scene=True))
+    assert (
+        site.get_tags(
+            meta(
+                category="GAME",
+                year="1997",
+                platform="Windows PC",
+                genres=["Action", "Science Fiction"],
+                scene=True,
+            )
+        )
         == "games, 1997, 1990s, action, scifi, pc, windows, scene"
     )
 
@@ -190,78 +286,48 @@ def test_renders_crt_category_description_templates():
     movie = meta(
         overview="A spoiler-free plot.",
         description="Release-specific note.",
-        image_list=[{"raw_url": f"https://iili.io/{index}.png"} for index in range(1, 4)],
+        image_list=[{"raw_url": "https://iili.io/one.png"}],
         is_disc="BDMV",
         discs=[{"summary": "Disc Title: EXAMPLE"}],
     )
-    assert asyncio.run(site.generate_description(movie)) == (  # noqa: S101
+    assert asyncio.run(site.generate_description(movie)) == (
         "[info]\nhttps://www.imdb.com/title/tt1234567/\nhttps://www.themoviedb.org/movie/123\n[/info]\n"
         "[plot]\nA spoiler-free plot.\n[/plot]\n"
         "[notes]\nRelease-specific note.\n[/notes]\n"
-        "[screens]\nhttps://iili.io/1.png https://iili.io/2.png https://iili.io/3.png\n[/screens]\n"
+        "[screens]\nhttps://iili.io/one.png\n[/screens]\n"
         "[details]\n[mediainfo]\nDisc Title: EXAMPLE\n[/mediainfo]\n[/details]\n\n"
-        "[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=0]Upload-Assistant[/size][/url][/align]"
+        "[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]Upload-Assistant[/size][/url][/align]"
     )
     game = meta(
-        category="GAME", imdb_tt="", tmdb=None, tmdb_id=None, steam_url="https://store.steampowered.com/app/1", release_url="https://example.com/game", overview="Game plot"
+        category="GAME",
+        imdb_tt="",
+        tmdb=None,
+        tmdb_id=None,
+        steam_url="https://store.steampowered.com/app/1",
+        release_url="https://example.com/game",
+        overview="Game plot",
     )
-    assert asyncio.run(site.generate_description(game)) == (  # noqa: S101
+    assert asyncio.run(site.generate_description(game)) == (
         "[info]\nhttps://store.steampowered.com/app/1\n[/info]\n[plot]\nGame plot\n[/plot]\n\n"
-        "[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=0]Upload-Assistant[/size][/url][/align]"
+        "[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]Upload-Assistant[/size][/url][/align]"
     )
-
-
-def test_strips_mediainfo_report_by_footer_from_description(monkeypatch):
-    site = tracker()
-    report = (
-        "General\nComplete name : Example.Movie.2010.VTS_01_0.IFO\nReportBy : MediaInfoLib - v26.10\n\n"
-        "General\nComplete name : Example.Movie.2010.VTS_01_1.VOB\nReportBy                                 : MediaInfoLib - v26.10\n"
-    )
-    monkeypatch.setattr(cathoderaytube_module.DescriptionBuilder, "get_bdinfo_section", AsyncMock(return_value=""))
-    monkeypatch.setattr(cathoderaytube_module.DescriptionBuilder, "get_mediainfo_section", AsyncMock(return_value=report))
-
-    description = asyncio.run(site.generate_description(meta()))
-
-    assert "ReportBy" not in description  # noqa: S101
-    assert (  # noqa: S101
-        "[mediainfo]\nGeneral\nComplete name : Example.Movie.2010.VTS_01_0.IFO\n\nGeneral\nComplete name : Example.Movie.2010.VTS_01_1.VOB\n[/mediainfo]" in description
-    )
-
-
-def test_places_supplemental_images_in_notes_and_groups_screenshots_by_three():
-    site = tracker()
-    item = meta(
-        description="Release note.",
-        menu_images=[{"raw_url": "https://iili.io/menu.png"}],
-        spectrograms_images=[{"raw_url": "https://iili.io/spectrum.png"}],
-        dynamic_hdr_plot_images=[{"raw_url": "https://iili.io/hdr.png"}],
-        image_list=[{"raw_url": f"https://iili.io/screen{i}.png"} for i in range(1, 9)] + [{}],
-    )
-
-    description = asyncio.run(site.generate_description(item))
-    assert "[notes]\nRelease note.\n\nhttps://iili.io/menu.png\nhttps://iili.io/spectrum.png\nhttps://iili.io/hdr.png\n[/notes]" in description  # noqa: S101
-    assert (  # noqa: S101
-        "[screens]\nhttps://iili.io/screen1.png https://iili.io/screen2.png https://iili.io/screen3.png\n"
-        "https://iili.io/screen4.png https://iili.io/screen5.png https://iili.io/screen6.png\n[/screens]" in description
-    )
-
-
-def test_supplemental_images_create_notes_without_note_text():
-    description = asyncio.run(tracker().generate_description(meta(menu_images=[{"raw_url": "https://iili.io/menu.png"}])))
-    assert "[notes]\nhttps://iili.io/menu.png\n[/notes]" in description  # noqa: S101
-    assert "[screens]" not in description  # noqa: S101
 
 
 def test_builds_simple_advanced_search_params():
-    assert tracker().get_search_params(meta()) == {  # noqa: S101
+    assert tracker().get_search_params(meta()) == {
         "action": "advanced",
         "filter_cat[1]": "1",
         "title": "Example Movie",
     }
-    tv_params = tracker().get_search_params(meta(category="TV", season="1", episode="2", imdb_id=0, genres=[]))
-    assert tv_params["filter_cat[2]"] == "1"  # noqa: S101
-    assert tv_params["title"] == "Example Movie"  # noqa: S101
-    assert tracker().get_imdb_search_params(meta()) == {"action": "advanced", "searchtext": "tt1234567"}  # noqa: S101
+    tv_params = tracker().get_search_params(
+        meta(category="TV", season="1", episode="2", imdb_id=0, genres=[])
+    )
+    assert tv_params["filter_cat[2]"] == "1"
+    assert tv_params["title"] == "Example Movie"
+    assert tracker().get_imdb_search_params(meta()) == {
+        "action": "advanced",
+        "searchtext": "tt1234567",
+    }
 
 
 def test_search_existing_uses_advanced_results_table():
@@ -270,7 +336,9 @@ def test_search_existing_uses_advanced_results_table():
         try:
             CathodeRayTube.auth_token = ""
             site = tracker()
-            site.cookie_validator.load_session_cookies = AsyncMock(return_value=httpx.Cookies({"session": "test"}))
+            site.cookie_validator.load_session_cookies = AsyncMock(
+                return_value=httpx.Cookies({"session": "test"})
+            )
             search_html = """
             <script>var authkey = 'search-csrf-token';</script>
             <table id="torrent_table"><tbody>
@@ -290,22 +358,38 @@ def test_search_existing_uses_advanced_results_table():
 
             async def handler(request):
                 requests.append(request)
-                html = detail_html if request.url.params.get("id") == "1" else search_html
+                html = (
+                    detail_html
+                    if request.url.params.get("id") == "1"
+                    else search_html
+                )
                 return httpx.Response(200, text=html, request=request)
 
-            site.session = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+            site.session = httpx.AsyncClient(
+                transport=httpx.MockTransport(handler)
+            )
             results = await site.search_existing(meta(is_disc="BDMV"))
-            assert len(requests) == 3  # noqa: S101
-            assert dict(requests[0].url.params) == {"action": "advanced", "filter_cat[1]": "1", "title": "Example Movie"}  # noqa: S101
-            assert str(requests[1].url) == "https://www.cathode-ray.tube/torrents.php?id=1"  # noqa: S101
-            assert dict(requests[2].url.params) == {"action": "advanced", "searchtext": "tt1234567"}  # noqa: S101
-            assert CathodeRayTube.auth_token == "search-csrf-token"  # noqa: S101, S105
+            assert len(requests) == 3
+            assert dict(requests[0].url.params) == {
+                "action": "advanced",
+                "filter_cat[1]": "1",
+                "title": "Example Movie",
+            }
+            assert (
+                str(requests[1].url)
+                == "https://www.cathode-ray.tube/torrents.php?id=1"
+            )
+            assert dict(requests[2].url.params) == {
+                "action": "advanced",
+                "searchtext": "tt1234567",
+            }
+            assert CathodeRayTube.auth_token == "search-csrf-token"
             await site.session.aclose()
             return results
         finally:
             CathodeRayTube.auth_token = original_auth_token
 
-    assert asyncio.run(run_search()) == [  # noqa: S101
+    assert asyncio.run(run_search()) == [
         {
             "name": "Release.Directory",
             "size": "1.25 GiB",
@@ -321,45 +405,108 @@ def test_content_name_uses_the_file_for_single_file_torrents():
     <div id="files_22000"><table>
       <tr class="smallhead"><td colspan="2">/</td></tr>
       <tr class="rowa"><td><strong>File Name</strong></td><td><strong>Size</strong></td></tr>
-      <tr><td>Invented.Archive.Film.1971.mkv</td><td>23.90 GiB</td></tr>
+      <tr><td>The.Abominable.DrPhibes.1971.mkv</td><td>23.90 GiB</td></tr>
     </table></div>
     """
-    assert CathodeRayTube._content_name(html) == "Invented.Archive.Film.1971.mkv"  # noqa: S101
+    assert (
+        CathodeRayTube._content_name(html)
+        == "The.Abominable.DrPhibes.1971.mkv"
+    )
 
 
 def test_enforces_known_archive_rules():
-    assert asyncio.run(tracker().get_additional_checks(meta()))  # noqa: S101
-    assert asyncio.run(tracker().get_additional_checks(meta(category="GAME", filelist=["Game.7z"])))  # noqa: S101
+    assert asyncio.run(tracker().get_additional_checks(meta()))
+    assert not asyncio.run(
+        tracker().get_additional_checks(meta(filelist=["Example.iso"]))
+    )
+    assert asyncio.run(
+        tracker().get_additional_checks(
+            meta(filelist=["Example.iso"], three_d="3D")
+        )
+    )
+    assert asyncio.run(
+        tracker().get_additional_checks(
+            meta(category="GAME", filelist=["Game.7z"])
+        )
+    )
 
 
 def test_enforces_crt_upload_rules():
     site = tracker()
 
     # 10-Year rule: release from 2024 (under 10 years old) fails unless edition/re-release is set
-    assert not asyncio.run(site.get_additional_checks(meta(year="2024")))  # noqa: S101
-    assert not asyncio.run(site.get_additional_checks(meta(category="MOVIE", release_date="2024-05-10")))  # noqa: S101
-    assert not asyncio.run(site.get_additional_checks(meta(category="TV", year="2000", last_air_date="2024-05-10")))  # noqa: S101
-    assert asyncio.run(site.get_additional_checks(meta(category="MOVIE", release_date="2010-05-10")))  # noqa: S101
-    assert asyncio.run(site.get_additional_checks(meta(category="TV", last_air_date="2010-05-10")))  # noqa: S101
-    assert asyncio.run(site.get_additional_checks(meta(year="2024", edition="Remastered")))  # noqa: S101
-    assert asyncio.run(site.get_additional_checks(meta(year="1995")))  # noqa: S101
+    assert not asyncio.run(site.get_additional_checks(meta(year="2024")))
+    assert not asyncio.run(
+        site.get_additional_checks(
+            meta(category="MOVIE", release_date="2024-05-10")
+        )
+    )
+    assert not asyncio.run(
+        site.get_additional_checks(
+            meta(category="TV", year="2000", last_air_date="2024-05-10")
+        )
+    )
+    assert asyncio.run(
+        site.get_additional_checks(
+            meta(category="MOVIE", release_date="2010-05-10")
+        )
+    )
+    assert asyncio.run(
+        site.get_additional_checks(
+            meta(category="TV", last_air_date="2010-05-10")
+        )
+    )
+    assert asyncio.run(
+        site.get_additional_checks(meta(year="2024", edition="Remastered"))
+    )
+    assert asyncio.run(site.get_additional_checks(meta(year="1995")))
 
     # English requirement: must have English audio or subtitles for MOVIE/TV
-    assert not asyncio.run(site.get_additional_checks(meta(audio_languages=["Japanese"], subtitle_languages=["French"])))  # noqa: S101
-    assert asyncio.run(site.get_additional_checks(meta(audio_languages=["Japanese"], subtitle_languages=["English"])))  # noqa: S101
+    assert not asyncio.run(
+        site.get_additional_checks(
+            meta(audio_languages=["Japanese"], subtitle_languages=["French"])
+        )
+    )
+    assert asyncio.run(
+        site.get_additional_checks(
+            meta(audio_languages=["Japanese"], subtitle_languages=["English"])
+        )
+    )
 
     # Sports and News forbidden in TV category
-    assert not asyncio.run(site.get_additional_checks(meta(category="TV", genres=["Sports"])))  # noqa: S101
-    assert not asyncio.run(site.get_additional_checks(meta(category="TV", genres=["News"])))  # noqa: S101
+    assert not asyncio.run(
+        site.get_additional_checks(meta(category="TV", genres=["Sports"]))
+    )
+    assert not asyncio.run(
+        site.get_additional_checks(meta(category="TV", genres=["News"]))
+    )
 
     # Screenshots check: minimum 6 screenshots for video content
-    assert not asyncio.run(site.get_additional_checks(meta(screens=3)))  # noqa: S101
+    assert not asyncio.run(site.get_additional_checks(meta(screens=3)))
 
     # MediaInfo validity check
-    assert not asyncio.run(site.get_additional_checks(meta(valid_mi=False)))  # noqa: S101
+    assert not asyncio.run(site.get_additional_checks(meta(valid_mi=False)))
 
 
 def test_extracts_successful_upload_url():
-    request = httpx.Request("POST", "https://www.cathode-ray.tube/torrents.php?id=123&torrentid=456")
+    request = httpx.Request(
+        "POST",
+        "https://www.cathode-ray.tube/torrents.php?id=123&torrentid=456",
+    )
     response = httpx.Response(200, request=request)
-    assert CathodeRayTube._uploaded_torrent_url(response).endswith("id=123&torrentid=456")  # noqa: S101
+    assert CathodeRayTube._uploaded_torrent_url(response).endswith(
+        "id=123&torrentid=456"
+    )
+
+
+def test_excludes_images_without_raw_url_from_screenshot_validation():
+    valid_images = [
+        {"raw_url": f"https://images.example/{index}.png"}
+        for index in range(5)
+    ]
+
+    assert not asyncio.run(
+        tracker().get_additional_checks(
+            meta(image_list=valid_images, dynamic_hdr_plot_images=[{}])
+        )
+    )

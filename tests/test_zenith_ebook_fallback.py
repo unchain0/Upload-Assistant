@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from src.domain_models.release import Meta
+from src.integrations.media.zentag import fallback_ebook_filename
+
+
+def _meta(**values: object) -> Meta:
+    defaults: dict[str, object] = {
+        "category": "BOOK",
+        "author": "J.K. Rowling",
+        "title": "Harry Potter and the Goblet of Fire",
+        "year": 2000,
+        "book_language_iso": "eng",
+        "isbn": "9781781100103",
+        "book_series": "Harry Potter",
+        "book_series_index": "4",
+        "path": "/books/Harry Potter.epub",
+    }
+    defaults.update(values)
+    return Meta(**defaults)
+
+
+def test_fallback_filename_matches_the_wiki_pattern() -> None:
+    assert fallback_ebook_filename(_meta()) == (
+        "J.K. Rowling - Harry Potter #4 - Harry Potter and the Goblet of Fire "
+        "(2000) [ENG 9781781100103].epub"
+    )
+
+
+def test_fallback_filename_applies_the_character_substitutions() -> None:
+    name = fallback_ebook_filename(
+        _meta(title="PHP/MySQL | JavaScript? <All-in-One> *Guide*")
+    )
+    assert name is not None
+    assert name.startswith(
+        "J.K. Rowling - Harry Potter #4 - PHP-MySQL - JavaScript All-in-One Guide"
+    )
+
+
+def test_fallback_filename_needs_the_identifier() -> None:
+    assert fallback_ebook_filename(_meta(isbn="")) is None
+    assert fallback_ebook_filename(_meta(year=None)) is None
+    assert fallback_ebook_filename(_meta(book_language_iso="")) is None
+
+
+def test_fallback_copies_the_ebook_without_touching_the_original(
+    tmp_path: Path,
+) -> None:
+    from src.integrations.media.zentag import _fallback_ebook_copy
+
+    source = tmp_path / "original.epub"
+    source.write_bytes(b"book")
+    meta = _meta(base_dir=str(tmp_path), uuid="abc")
+    target = _fallback_ebook_copy(meta, source, str(tmp_path))
+    assert target is not None
+    expected = Path(target)
+    assert expected.is_file()
+    assert expected.name == (
+        "J.K. Rowling - Harry Potter #4 - Harry Potter and the Goblet of Fire "
+        "(2000) [ENG 9781781100103].epub"
+    )
+    assert expected.read_bytes() == b"book"
+    assert source.read_bytes() == b"book"
+
+
+def test_missing_fields_are_logged(
+    caplog,  # type: ignore[no-untyped-def]
+) -> None:
+    assert fallback_ebook_filename(_meta(isbn="", year=None)) is None
+    assert "missing: year, isbn" in caplog.text
+
+
+def test_ebook_meta_failure_uses_the_fallback(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    from src.integrations.media import zentag
+
+    source = tmp_path / "original.epub"
+    source.write_bytes(b"book")
+    meta = _meta(path=str(source), base_dir=str(tmp_path), uuid="abc")
+
+    async def failing(_meta: object, _source: object, _base: str, _config: object) -> str:
+        raise RuntimeError("zentag failed: ebook-meta not usable")
+
+    monkeypatch.setattr(zentag, "_prepare_ebook_copy", failing)
+    monkeypatch.setattr(zentag, "_ebook_source", lambda _meta: source)
+    monkeypatch.setattr(
+        zentag, "should_prepare_zenith_ebook", lambda _meta, _config: True
+    )
+    target = __import__("asyncio").run(
+        zentag.prepare_zenith_ebook(meta, str(tmp_path), {})
+    )
+    assert target is not None
+    release_file = Path(target)
+    assert release_file.name == (
+        "J.K. Rowling - Harry Potter #4 - Harry Potter and the Goblet of Fire "
+        "(2000) [ENG 9781781100103].epub"
+    )
+    assert release_file.is_file()
+
+
+def test_fallback_directories_are_unique(tmp_path: Path) -> None:
+    from src.integrations.media.zentag import _fallback_ebook_copy
+
+    source = tmp_path / "original.epub"
+    source.write_bytes(b"book")
+    meta = _meta(base_dir=str(tmp_path), uuid="abc")
+    first = _fallback_ebook_copy(meta, source, str(tmp_path))
+    second = _fallback_ebook_copy(meta, source, str(tmp_path))
+    assert first is not None and second is not None
+    assert Path(first).parent != Path(second).parent
+    assert "(1)" not in Path(first).name and "(1)" not in Path(second).name
+
+
+def test_fallback_filename_moves_the_trailing_article() -> None:
+    assert fallback_ebook_filename(
+        _meta(title="Origins of the Federal Reserve, The")
+    ).startswith("J.K. Rowling - Harry Potter #4 - The Origins of the Federal Reserve")
+    assert fallback_ebook_filename(
+        _meta(title="Tale, A")
+    ).startswith("J.K. Rowling - Harry Potter #4 - A Tale")
+    assert fallback_ebook_filename(
+        _meta(title="Apple, An")
+    ).startswith("J.K. Rowling - Harry Potter #4 - An Apple")
+    assert fallback_ebook_filename(_meta(title="Plain Title")).startswith(
+        "J.K. Rowling - Harry Potter #4 - Plain Title"
+    )
+
+
+def test_fallback_filename_drops_a_long_subtitle() -> None:
+    name = fallback_ebook_filename(
+        _meta(
+            author="René Descartes",
+            title=(
+                "Meditations on First Philosophy: With Selections from the "
+                "Objections and Replies"
+            ),
+            year=2008,
+            book_series="",
+            book_series_index="",
+            isbn="9780192806963",
+        )
+    )
+    assert name == (
+        "René Descartes - Meditations on First Philosophy (2008) "
+        "[ENG 9780192806963].epub"
+    )
+
+
+def test_surname_comma_author_is_inverted() -> None:
+    from src.domain_models.book_language import extract_first_author
+
+    assert extract_first_author("de Carvalho, Olavo") == "Olavo de Carvalho"
+    assert extract_first_author("Rowling, J.K.") == "J.K. Rowling"
+
+
+def test_description_after_colon_is_removed_and_series_titles_stay() -> None:
+    from src.integrations.media.zentag import _without_book_subtitle
+
+    assert _without_book_subtitle(
+        "A Nova Era e a Revolução Cultural: Fritjof Capra & Antonio Gramsci"
+    ) == "A Nova Era e a Revolução Cultural"
+    assert (
+        _without_book_subtitle("Algorithms: Part II") == "Algorithms: Part II"
+    )
+    assert _without_book_subtitle(
+        "Code: The Hidden Language of Computer Hardware and Software"
+    ) == "Code: The Hidden Language of Computer Hardware and Software"
+    assert (
+        _without_book_subtitle("Algorithms: Part II (Fahad Batla's Library)")
+        == "Algorithms: Part II"
+    )
+
+
+def test_several_authors_keep_order_and_a_separator() -> None:
+    import json
+
+    from src.domain_models.release import Meta
+    from src.integrations.external_apis.myanonamouse import MyAnonamouseManager
+    from src.services.book_preparation import _finalize_book_prep_sanitization
+
+    parsed = MyAnonamouseManager()._parse_torrent_info(
+        {
+            "title": "Python Machine Learning",
+            "author_info": json.dumps(
+                {"2": "Vahid Mirjalili", "1": "Sebastian Raschka"}
+            ),
+        }
+    )
+    assert parsed["author"] == "Sebastian Raschka, Vahid Mirjalili"
+
+    meta = Meta(
+        author="Vahid Mirjalili Sebastian Raschka",
+        book_author="Sebastian Raschka, Vahid Mirjalili",
+    )
+    _finalize_book_prep_sanitization(meta)
+    assert meta.author == "Sebastian Raschka, Vahid Mirjalili"

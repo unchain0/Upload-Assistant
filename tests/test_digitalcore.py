@@ -1,25 +1,41 @@
-from src.rehostimages import _image_host
-from src.trackers.digitalcore import DigitalCore
+from src.integrations.image_hosts.rehosting import _image_host
+from src.integrations.trackers.digitalcore import DigitalCore
 
 
-def test_uses_the_image_hosts_approved_by_digitalcore():
-    assert "ptscreens" in DigitalCore.approved_image_hosts  # noqa: S101
-    assert "onlyimage" not in DigitalCore.approved_image_hosts  # noqa: S101
-    assert _image_host("https://img2.ptscreens.com/image.png", DigitalCore.image_host_policy.url_host_mapping) == "ptscreens"  # noqa: S101
+def test_uses_only_the_site_image_host_for_digitalcore():
+    assert DigitalCore.approved_image_hosts == ("sharex",)
+    assert DigitalCore.image_host_policy.preferred_image_host == "sharex"
+    assert (
+        _image_host(
+            "https://img.digitalcore.club/image.png",
+            DigitalCore.image_host_policy.url_host_mapping,
+        )
+        == "sharex"
+    )
+    # Upload reviews reject PTScreens even though the renderer accepts it.
+    assert (
+        _image_host(
+            "https://img2.ptscreens.com/image.png",
+            DigitalCore.image_host_policy.url_host_mapping,
+        )
+        not in DigitalCore.approved_image_hosts
+    )
+    assert (
+        _image_host(
+            "https://i.ibb.co/image.png",
+            DigitalCore.image_host_policy.url_host_mapping,
+        )
+        not in DigitalCore.approved_image_hosts
+    )
 
 
-def test_force_rehost_images_uses_digitalcore_sharex_without_changing_global_host():
-    config = {
-        "DEFAULT": {
-            "img_host_1": "ptscreens",
-            "sharex_url": "https://img.digitalcore.club/api/upload",
-            "sharex_api_key": "secret",
-        },
-        "TRACKERS": {"DIGITALCORE": {"api_key": "tracker-key", "force_rehost_images": True}},
-    }
+def test_legacy_ptscreens_urls_are_normalized_but_not_approved() -> None:
+    legacy = "https://img.ptscreens.com/example.png"
+    expected = "https://img2.ptscreens.com/example.png"
 
-    tracker = DigitalCore(config)
-
-    assert tracker.image_host_policy.approved_image_hosts == ("sharex",)  # noqa: S101
-    assert tracker.rehost_images_manager.default_config["img_host_1"] == "sharex"  # noqa: S101
-    assert config["DEFAULT"]["img_host_1"] == "ptscreens"  # noqa: S101
+    assert DigitalCore._normalize_renderer_image_urls(legacy) == expected
+    assert DigitalCore._safe_image_url(legacy) == ""
+    assert (
+        DigitalCore._safe_image_url("https://img2.ptscreens.com/example.png")
+        == ""
+    )

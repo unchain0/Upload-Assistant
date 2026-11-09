@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# Drive the Upload Assistant CLI against a disposable UA_DATA_DIR.
+# Never reads or prints config values. Never touches the user state directory.
+set -euo pipefail
+
+BIN_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SKILL_DIR=$(cd "$BIN_DIR/.." && pwd)
+REPO=$(cd "$SKILL_DIR/../../.." && pwd)
+EVIDENCE="$SKILL_DIR/artifacts"
+STATE="$EVIDENCE/run-state.env"
+
+die() {
+  printf 'ua-verify: %s\n' "$*" >&2
+  exit 2
+}
+
+user_state_dirs() {
+  printf '%s\n' \
+    "$HOME/.local/share/Upload-Assistant" \
+    "$HOME/.local/share/upload-assistant" \
+    "$REPO/data"
+}
+
+refuse_shared_dir() {
+  local candidate resolved listed
+  candidate=$(realpath "$1")
+  while IFS= read -r listed; do
+    if [[ -e "$listed" ]]; then
+      resolved=$(realpath "$listed")
+      if [[ "$candidate" == "$resolved" ]]; then
+        die "refusing shared state directory $candidate"
+      fi
+    fi
+  done < <(user_state_dirs)
+}
+
+load_state() {
+  if [[ -f "$STATE" ]]; then
+    # shellcheck disable=SC1090
+    source "$STATE"
+  fi
+  if [[ -z "${UA_DATA_DIR:-}" ]]; then
+    die "no disposable data dir; run ua-verify launch first"
+  fi
+  refuse_shared_dir "$UA_DATA_DIR"
+}
+
+require_repo() {
+  [[ -f "$REPO/upload.py" ]] || die "upload.py missing in $REPO"
+  [[ -f "$REPO/data/example_config.py" ]] || die "example config missing"
+  command -v uv >/dev/null || die "uv is not on PATH"
+}
+
+seed_config() {
+  mkdir -p "$UA_DATA_DIR/data"
+  if [[ ! -f "$UA_DATA_DIR/data/config.py" ]]; then
+    cp "$REPO/data/example_config.py" "$UA_DATA_DIR/data/config.py"
+  fi
+}
+
+run_cli() {
+  local destination=$1
+  shift
+  mkdir -p "$(dirname "$destination")"
+  set +e
+  (
+    cd "$REPO"
+    UA_DATA_DIR="$UA_DATA_DIR" uv run python upload.py "$@"
+  ) >"$destination" 2>"$destination.err"
+  local status=$?
+  set -e
+  printf '%s\n' "$status" >"$destination.exit"
+  return "$status"
+}
+
+assert_usage() {
+  local path=$1
+  grep -q 'usage: upload.py' "$path" || die "$path has no CLI usage"
+  if grep -E -q 'web_ui|0\.0\.0\.0|127\.0\.0\.1:[0-9]' "$path"; then
+    die "$path looks like a web server"
+  fi
+}
+
+cmd_launch() {
+  require_repo
+  mkdir -p "$EVIDENCE"
+  if [[ -z "${UA_DATA_DIR:-}" ]]; then
+    UA_DATA_DIR=$(mktemp -d /tmp/ua-verify.XXXXXX)
+  fi
+  refuse_shared_dir "$UA_DATA_DIR"
+  if [[ -f "$STATE" ]]; then
+    local previous
+    previous=$(sed -n 's/^UA_DATA_DIR=//p' "$STATE" | head -n 1)
+    previous=${previous//\'/}
+    if [[ -n "$previous" && "$previous" != "$UA_DATA_DIR" && -d "$previous" ]]; then
+      die "a verification instance is already recorded; run cleanup first"
+    fi
+  fi
+  seed_config
+  printf "UA_DATA_DIR='%s'\n" "$UA_DATA_DIR" >"$STATE"
+  run_cli "$EVIDENCE/launch-help.txt" --help
+  assert_usage "$EVIDENCE/launch-help.txt"
+  [[ "$(cat "$EVIDENCE/launch-help.txt.exit")" == "0" ]] || die "launch help exited non-zero"
+  printf 'ready %s\n' "$UA_DATA_DIR"
+}
+
+cmd_doctor() {
+  require_repo
+  load_state
+  [[ -f "$UA_DATA_DIR/data/config.py" ]] || die "runtime config missing"
+  [[ ! -f "$REPO/data/config.py" ]] || printf 'checkout legacy config present; startup may copy settings into the disposable dir\n' >&2
+  printf 'doctor ok\nrepo=%s\ndata_dir=%s\nconfig=present\nuv=%s\n' \
+    "$REPO" "$UA_DATA_DIR" "$(command -v uv)"
+}
+
+cmd_drive_usage() {
+  load_state
+  require_repo
+  run_cli "$EVIDENCE/usage/short.txt" -h || true
+  run_cli "$EVIDENCE/usage/full.txt" --help || true
+  [[ "$(cat "$EVIDENCE/usage/short.txt.exit")" == "0" ]] || die "short help failed"
+  [[ "$(cat "$EVIDENCE/usage/full.txt.exit")" == "0" ]] || die "full help failed"
+  assert_usage "$EVIDENCE/usage/short.txt"
+  assert_usage "$EVIDENCE/usage/full.txt"
+  grep -q 'Common options:' "$EVIDENCE/usage/short.txt" || die "short help missing common options"
+  grep -q -- '--debug' "$EVIDENCE/usage/full.txt" || die "full help missing --debug"
+  grep -q -- '--no-seed' "$EVIDENCE/usage/full.txt" || die "full help missing --no-seed"
+  printf 'usage ok\n'
+}
+
+cmd_drive_debug() {
+  load_state
+  [[ -n "${UA_VERIFY_MEDIA:-}" && -f "$UA_VERIFY_MEDIA" ]] || die "unmet precondition: set UA_VERIFY_MEDIA to a local video file"
+  [[ "${UA_VERIFY_ALLOW_DRY_RUN:-}" == "1" ]] || die "unmet precondition: debug still calls metadata services; set UA_VERIFY_ALLOW_DRY_RUN=1 to run it"
+  run_cli "$EVIDENCE/debug-dry-run/stdout.txt" \
+    "$UA_VERIFY_MEDIA" --debug --unattended --no-seed || true
+  printf 'debug exit %s\n' "$(cat "$EVIDENCE/debug-dry-run/stdout.txt.exit")"
+}
+
+cmd_drive_site_check() {
+  load_state
+  die "unmet precondition: example config has no tracker credentials; site-check would search live trackers"
+}
+
+cmd_drive_config() {
+  load_state
+  require_repo
+  mkdir -p "$EVIDENCE/config-update"
+  set +e
+  (
+    cd "$REPO"
+    printf 'Y\n' | UA_DATA_DIR="$UA_DATA_DIR" uv run python config-generator.py
+  ) >"$EVIDENCE/config-update/stdout.txt" 2>"$EVIDENCE/config-update/stdout.txt.err"
+  local status=$?
+  set -e
+  printf '%s\n' "$status" >"$EVIDENCE/config-update/stdout.txt.exit"
+  [[ "$status" == "0" ]] || die "config generator exited $status"
+  grep -q 'Configuration file created' "$EVIDENCE/config-update/stdout.txt" || die "config generator did not report a written file"
+  [[ -f "$UA_DATA_DIR/data/config.py" ]] || die "config.py missing after generator"
+  printf 'config-update ok\n'
+}
+
+cmd_cleanup() {
+  mkdir -p "$EVIDENCE"
+  if [[ -f "$STATE" ]]; then
+    # shellcheck disable=SC1090
+    source "$STATE"
+  fi
+  if [[ -n "${UA_DATA_DIR:-}" && -d "$UA_DATA_DIR" ]]; then
+    refuse_shared_dir "$UA_DATA_DIR"
+    rm -rf "$UA_DATA_DIR"
+    printf 'removed %s\n' "$UA_DATA_DIR" | tee "$EVIDENCE/cleanup.txt"
+  else
+    printf 'no instance directory\n' | tee "$EVIDENCE/cleanup.txt"
+  fi
+  rm -f "$STATE"
+}
+
+usage() {
+  cat <<'EOF'
+usage: ua-verify launch|doctor|drive|cleanup
+  drive usage
+  drive debug-dry-run
+  drive site-check
+  drive config-update
+EOF
+}
+
+main() {
+  local command=${1:-}
+  case "$command" in
+    launch) cmd_launch ;;
+    doctor) cmd_doctor ;;
+    drive)
+      case ${2:-} in
+        usage) cmd_drive_usage ;;
+        debug-dry-run) cmd_drive_debug ;;
+        site-check) cmd_drive_site_check ;;
+        config-update) cmd_drive_config ;;
+        *) die "unknown drive target ${2:-}" ;;
+      esac
+      ;;
+    cleanup) cmd_cleanup ;;
+    *) usage; exit 2 ;;
+  esac
+}
+
+main "$@"

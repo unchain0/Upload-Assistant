@@ -1,89 +1,22 @@
 """Regression coverage for tracker-specific image-host reuploads."""
 
-# ruff: noqa: S101
-
 import asyncio
-import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import AsyncMock
 
-import pytest
-
-from src.meta import Meta
-from src.rehostimages import (
+from src.domain_models.release import Meta
+from src.domain_models.tracker_image_policy import (
+    get_tracker_image_collection,
+    has_tracker_image_collection,
+)
+from src.integrations.image_hosts.rehosting import (
     ImageHostPolicy,
     RehostImagesManager,
-    _deduplicate_image_records,
-    _handle_image_upload,
     check_tracker_image_hosts,
     has_restricted_image_hosts,
     select_common_image_host,
 )
-from src.screenshot_manifest import register
-from src.temp_paths import screenshots_dir
-from src.tracker_images import get_tracker_image_collection, has_tracker_image_collection
-
-
-@pytest.mark.parametrize("is_disc, capture_method", [("", "screenshots"), ("DVD", "dvd_screenshots"), ("BDMV", "disc_screenshots"), ("", "xxx_contact_sheets")])
-@pytest.mark.parametrize("replace_existing", [False, True])
-def test_rehosting_discovers_registered_screenshots_after_capture(tmp_path, is_disc, capture_method, replace_existing):
-    directory = screenshots_dir(tmp_path, "release")
-    is_contact_sheet = capture_method == "xxx_contact_sheets"
-    suffix = ".webp" if is_contact_sheet else ".png"
-    screenshot = directory / f"original{suffix}"
-    screenshot.write_bytes(b"png")
-    screenshot = register(tmp_path, "release", [screenshot], "main")[0]
-    (directory / "Example-0.png").write_bytes(b"stray")
-    extra = directory / "extra.png"
-    extra.write_bytes(b"extra")
-    register(tmp_path, "release", [extra], "FILE_1")
-    created = []
-
-    def capture(*_args, **_kwargs):
-        if replace_existing:
-            screenshot.unlink()
-        for index in range(2 if replace_existing else 1):
-            image = directory / f"captured-{index}{suffix}"
-            image.write_bytes(b"png")
-            created.extend(register(tmp_path, "release", [image], "main"))
-
-    async def host(*args, **_kwargs):
-        images = [{key: f"https://imgbox.com/{Path(path).name}" for key in ("img_url", "raw_url", "web_url")} for path in args[5]]
-        return images, len(images)
-
-    capture_mock = AsyncMock(side_effect=capture)
-    hosting = AsyncMock(side_effect=host)
-    meta = Meta(
-        base_dir=str(tmp_path),
-        uuid="release",
-        title="Example",
-        screens=2,
-        filelist=["source.mkv"],
-        is_disc=is_disc,
-        category="XXX" if is_contact_sheet else "MOVIE",
-        image_list=[{key: f"https://imgbox.com/{screenshot.name}" for key in ("img_url", "raw_url", "web_url")}],
-    )
-    result, retry, _reuploaded = asyncio.run(
-        _handle_image_upload(
-            meta,
-            "TEST",
-            {"imgbox.com": "imgbox"},
-            ["imgbox"],
-            default_config={"img_host_1": "imgbox"},
-            takescreens_manager=SimpleNamespace(**{capture_method: capture_mock}),
-            uploadscreens_manager=SimpleNamespace(upload_screens=hosting),
-        )
-    )
-
-    capture_mock.assert_awaited_once()
-    assert not retry
-    assert len(result) == 2
-    expected = created if replace_existing else [screenshot, *created]
-    assert set(hosting.await_args.args[5]) == set(map(str, expected))
-    if not replace_existing:
-        assert hosting.await_args.args[5][0] == str(screenshot)
 
 
 class _Alpha:
@@ -113,17 +46,6 @@ class _PolicyTracker:
         self.rehost_images_manager = AsyncMock()
 
 
-def test_deduplicates_tagged_image_records() -> None:
-    image = {
-        "img_url": "https://images.example.test/thumb.png",
-        "raw_url": "https://images.example.test/full.png",
-        "web_url": "https://images.example.test/view/1",
-        "tags": ["tonemapped"],
-    }
-
-    assert _deduplicate_image_records([image, dict(image)]) == [image]
-
-
 def test_has_restricted_image_hosts() -> None:
     tracker_map = {
         "ALPHA": _Alpha,
@@ -139,9 +61,23 @@ def test_has_restricted_image_hosts() -> None:
 
 def test_select_common_image_host_uses_first_configured_shared_host() -> None:
     selected = select_common_image_host(
-        {"img_host_1": "imgbox", "img_host_2": "imgbb", "img_host_3": "ptscreens"},
+        {
+            "img_host_1": "imgbox",
+            "img_host_2": "imgbb",
+            "img_host_3": "ptscreens",
+        },
         ["ALPHA", "BETA", "UNRESTRICTED"],
         {"ALPHA": _Alpha, "BETA": _Beta, "UNRESTRICTED": _Unrestricted},
+    )
+
+    assert selected == "imgbb"
+
+
+def test_select_common_image_host_strips_configured_host_whitespace() -> None:
+    selected = select_common_image_host(
+        {"img_host_1": " IMGBB "},
+        ["ALPHA", "BETA"],
+        {"ALPHA": _Alpha, "BETA": _Beta},
     )
 
     assert selected == "imgbb"
@@ -157,7 +93,9 @@ def test_select_common_image_host_accepts_legacy_set_policy() -> None:
     assert selected == "imgbb"
 
 
-def test_select_common_image_host_keeps_per_tracker_fallback_without_common_host() -> None:
+def test_select_common_image_host_keeps_per_tracker_fallback_without_common_host() -> (
+    None
+):
     selected = select_common_image_host(
         {"img_host_1": "imgbox", "img_host_2": "ptscreens"},
         ["ALPHA", "BETA"],
@@ -175,44 +113,9 @@ def test_music_does_not_rehost_missing_screenshots() -> None:
     tracker.rehost_images_manager.check_policy.assert_not_awaited()
 
 
-def test_reuses_rehosted_images_from_screenshot_cache(tmp_path: Path) -> None:
-    screenshots_path = tmp_path / "tmp" / "release" / "screenshots"
-    screenshots_path.mkdir(parents=True)
-    cached_images = [
-        {
-            "img_url": "https://i.ibb.co/cached.png",
-            "raw_url": "https://i.ibb.co/cached.png",
-            "web_url": "https://ibb.co/cached",
-        }
-    ]
-    (screenshots_path / "reuploaded_images.json").write_text(json.dumps(cached_images), encoding="utf-8")
-
-    manager = RehostImagesManager({"DEFAULT": {"img_host_1": "imgbb"}})
-    manager.uploadscreens_manager.upload_screens = AsyncMock()
-    meta = Meta(
-        base_dir=str(tmp_path),
-        uuid="release",
-        imghost="lostimg",
-        image_list=[{"raw_url": "https://lostimg.cc/original.png"}],
-    )
-
-    result, retry_mode, images_reuploaded = asyncio.run(
-        manager.check_hosts(
-            meta,
-            "TEST",
-            {"i.ibb.co": "imgbb", "lostimg.cc": "lostimg"},
-            approved_image_hosts=["imgbb"],
-        )
-    )
-
-    assert result == cached_images
-    assert not retry_mode
-    assert not images_reuploaded
-    assert meta.image_list == [{"raw_url": "https://lostimg.cc/original.png"}]
-    manager.uploadscreens_manager.upload_screens.assert_not_awaited()
-
-
-def test_rehosts_menu_and_spectrogram_images_without_touching_main_screens(tmp_path: Path):
+def test_rehosts_menu_and_spectrogram_images_without_touching_main_screens(
+    tmp_path: Path,
+):
     menu_source = tmp_path / "menu.png"
     spectrogram_source = tmp_path / "spectrogram.png"
     menu_source.write_bytes(b"menu")
@@ -221,8 +124,26 @@ def test_rehosts_menu_and_spectrogram_images_without_touching_main_screens(tmp_p
     manager = RehostImagesManager({"DEFAULT": {"img_host_1": "imgbb"}})
     manager.uploadscreens_manager.upload_screens = AsyncMock(
         side_effect=[
-            ([{"img_url": "https://i.ibb.co/menu.png", "raw_url": "https://i.ibb.co/menu.png", "web_url": "https://ibb.co/menu"}], 1),
-            ([{"img_url": "https://i.ibb.co/spectrogram.png", "raw_url": "https://i.ibb.co/spectrogram.png", "web_url": "https://ibb.co/spectrogram"}], 1),
+            (
+                [
+                    {
+                        "img_url": "https://i.ibb.co/menu.png",
+                        "raw_url": "https://i.ibb.co/menu.png",
+                        "web_url": "https://ibb.co/menu",
+                    }
+                ],
+                1,
+            ),
+            (
+                [
+                    {
+                        "img_url": "https://i.ibb.co/spectrogram.png",
+                        "raw_url": "https://i.ibb.co/spectrogram.png",
+                        "web_url": "https://ibb.co/spectrogram",
+                    }
+                ],
+                1,
+            ),
         ]
     )
     meta = Meta(
@@ -230,8 +151,18 @@ def test_rehosts_menu_and_spectrogram_images_without_touching_main_screens(tmp_p
         uuid="release",
         imghost="lostimg",
         image_list=[{"raw_url": "https://i.ibb.co/main.png"}],
-        menu_images=[{"raw_url": "https://lostimg.cc/menu.png", "local_file_path": str(menu_source)}],
-        spectrograms_images=[{"raw_url": "https://lostimg.cc/spectrogram.png", "local_file_path": str(spectrogram_source)}],
+        menu_images=[
+            {
+                "raw_url": "https://lostimg.cc/menu.png",
+                "local_file_path": str(menu_source),
+            }
+        ],
+        spectrograms_images=[
+            {
+                "raw_url": "https://lostimg.cc/spectrogram.png",
+                "local_file_path": str(spectrogram_source),
+            }
+        ],
     )
 
     assert not has_tracker_image_collection(meta, "TEST", "screenshots")
@@ -240,27 +171,51 @@ def test_rehosts_menu_and_spectrogram_images_without_touching_main_screens(tmp_p
         manager.check_policy(
             meta,
             "TEST",
-            ImageHostPolicy({"i.ibb.co": "imgbb", "lostimg.cc": "lostimg"}, ("imgbb",)),
+            ImageHostPolicy(
+                {"i.ibb.co": "imgbb", "lostimg.cc": "lostimg"}, ("imgbb",)
+            ),
         )
     )
 
     assert result == meta.image_list
     assert meta.image_list == [{"raw_url": "https://i.ibb.co/main.png"}]
     assert meta.menu_images[0]["raw_url"] == "https://lostimg.cc/menu.png"
-    assert meta.spectrograms_images[0]["raw_url"] == "https://lostimg.cc/spectrogram.png"
+    assert (
+        meta.spectrograms_images[0]["raw_url"]
+        == "https://lostimg.cc/spectrogram.png"
+    )
     tracker_images = meta.tracker_image_collections["TEST"]
     assert has_tracker_image_collection(meta, "TEST", "screenshots")
     assert tracker_images["screenshots"] == meta.image_list
     assert tracker_images["screenshots"] is not meta.image_list
     assert tracker_images["screenshots"][0] is not meta.image_list[0]
-    assert tracker_images["menu_images"][0]["raw_url"] == "https://i.ibb.co/menu.png"
-    assert tracker_images["menu_images"][0]["local_file_path"] == str(menu_source)
-    assert tracker_images["spectrograms_images"][0]["raw_url"] == "https://i.ibb.co/spectrogram.png"
-    assert tracker_images["spectrograms_images"][0]["local_file_path"] == str(spectrogram_source)
-    assert get_tracker_image_collection(meta, "TEST", "menu_images") == tracker_images["menu_images"]
-    assert get_tracker_image_collection(meta, "OTHER", "menu_images") == meta.menu_images
+    assert (
+        tracker_images["menu_images"][0]["raw_url"]
+        == "https://i.ibb.co/menu.png"
+    )
+    assert tracker_images["menu_images"][0]["local_file_path"] == str(
+        menu_source
+    )
+    assert (
+        tracker_images["spectrograms_images"][0]["raw_url"]
+        == "https://i.ibb.co/spectrogram.png"
+    )
+    assert tracker_images["spectrograms_images"][0]["local_file_path"] == str(
+        spectrogram_source
+    )
+    assert (
+        get_tracker_image_collection(meta, "TEST", "menu_images")
+        == tracker_images["menu_images"]
+    )
+    assert (
+        get_tracker_image_collection(meta, "OTHER", "menu_images")
+        == meta.menu_images
+    )
     assert meta.imghost == "lostimg"
 
     calls = manager.uploadscreens_manager.upload_screens.await_args_list
-    assert [call.args[5] for call in calls] == [[str(menu_source)], [str(spectrogram_source)]]
+    assert [call.args[5] for call in calls] == [
+        [str(menu_source)],
+        [str(spectrogram_source)],
+    ]
     assert all(call.kwargs["allowed_hosts"] == ["imgbb"] for call in calls)

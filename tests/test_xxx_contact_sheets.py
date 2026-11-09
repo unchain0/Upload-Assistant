@@ -5,11 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PIL import Image
 
-from src import takescreens
-from src.meta import Meta
-from src.screenshot_manifest import files as manifest_files
+from src.domain_models.release import Meta
+from src.integrations.filesystem.screenshot_manifest import (
+    files as manifest_files,
+)
+from src.integrations.media import screenshot_capture as takescreens
 
 
 def test_xxx_contact_sheet_settings_have_expected_defaults():
@@ -19,13 +20,23 @@ def test_xxx_contact_sheet_settings_have_expected_defaults():
 
 
 def test_xxx_contact_sheet_settings_allow_overrides():
-    takescreens._apply_config({"DEFAULT": {"xxx_contact_sheet_rows": "3", "xxx_contact_sheet_columns": 4, "xxx_contact_sheet_max_videos": "2"}})
+    takescreens._apply_config(
+        {
+            "DEFAULT": {
+                "xxx_contact_sheet_rows": "3",
+                "xxx_contact_sheet_columns": 4,
+                "xxx_contact_sheet_max_videos": "2",
+            }
+        }
+    )
 
     assert takescreens.xxx_contact_sheet_settings() == (3, 4, 2)
 
 
 def test_xxx_contact_sheet_animation_defaults_to_a_five_second_webp_option():
-    takescreens._apply_config({"DEFAULT": {"xxx_contact_sheet_animated_webp": True}})
+    takescreens._apply_config(
+        {"DEFAULT": {"xxx_contact_sheet_animated_webp": True}}
+    )
 
     assert takescreens.xxx_contact_sheet_animation_settings() == (True, 5.0)
 
@@ -35,37 +46,55 @@ def test_xxx_contact_sheet_timestamp_formatting():
 
 
 @pytest.mark.asyncio
-async def test_xxx_contact_sheets_create_one_grid_per_video_up_to_configured_limit(tmp_path, monkeypatch):
+async def test_xxx_contact_sheets_create_one_grid_per_video_up_to_configured_limit(
+    tmp_path, monkeypatch
+):
     videos = []
     for index in range(3):
         video = tmp_path / f"OnlyFans.Creator.{index}.mp4"
         video.write_bytes(b"video")
         videos.append(str(video))
 
-    takescreens._apply_config({"DEFAULT": {"xxx_contact_sheet_rows": 2, "xxx_contact_sheet_columns": 3, "xxx_contact_sheet_max_videos": 2}})
+    takescreens._apply_config(
+        {
+            "DEFAULT": {
+                "xxx_contact_sheet_rows": 2,
+                "xxx_contact_sheet_columns": 3,
+                "xxx_contact_sheet_max_videos": 2,
+            }
+        }
+    )
     commands = []
-    recorded = []
 
     def fake_probe(_path):
-        return {"format": {"duration": "60"}, "streams": [{"codec_type": "video"}]}
+        return {"format": {"duration": "60"}}
 
     async def fake_run_ffmpeg(command):
         commands.append(" ".join(takescreens.compile_ffmpeg_command(command)))
-        output = Path(takescreens.get_ffmpeg_output_path(command, takescreens.compile_ffmpeg_command(command)))
+        output = Path(
+            takescreens.get_ffmpeg_output_path(
+                command, takescreens.compile_ffmpeg_command(command)
+            )
+        )
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"contact sheet")
         return 0, b"", b""
 
-    async def fake_record_event(family, **values):
-        recorded.append((family, values))
-
-    monkeypatch.setattr(takescreens.ffmpeg, "probe", fake_probe)
-    monkeypatch.setattr(takescreens, "run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr(takescreens, "_xxx_contact_sheet_fontfile", lambda: "C:/Windows/Fonts/arial.ttf")
-    monkeypatch.setattr(takescreens, "record_event_async", fake_record_event)
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.ffmpeg.probe", fake_probe
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.run_ffmpeg", fake_run_ffmpeg
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture._xxx_contact_sheet_fontfile",
+        lambda: "C:/Windows/Fonts/arial.ttf",
+    )
     meta = Meta(base_dir=str(tmp_path), uuid="xxx-release", category="XXX")
 
-    sheets = await takescreens.xxx_contact_sheets(videos, meta.uuid, meta.base_dir, meta)
+    sheets = await takescreens.xxx_contact_sheets(
+        videos, meta.uuid, meta.base_dir, meta
+    )
 
     assert len(sheets) == 2
     assert meta.screens == 2
@@ -74,342 +103,56 @@ async def test_xxx_contact_sheets_create_one_grid_per_video_up_to_configured_lim
     assert all("drawtext" in command for command in commands)
     assert all("fontfile" in command for command in commands)
     assert all("pts" in command for command in commands)
-    assert recorded == [("artifact", {"service": "screenshot", "operation": "created", "category": "standard", "count": 2})]
 
 
 @pytest.mark.asyncio
-async def test_animated_xxx_contact_sheet_is_registered_as_webp(tmp_path, monkeypatch):
+async def test_animated_xxx_contact_sheet_is_registered_as_webp(
+    tmp_path, monkeypatch
+):
     video = tmp_path / "OnlyFans.Creator.mp4"
     video.write_bytes(b"video")
-    takescreens._apply_config({"DEFAULT": {"xxx_contact_sheet_rows": 1, "xxx_contact_sheet_columns": 2, "xxx_contact_sheet_animated_webp": True}})
-    commands = []
-
-    def fake_probe(_path):
-        return {"format": {"duration": "60"}, "streams": [{"codec_type": "video"}]}
-
-    async def fake_run_ffmpeg(command):
-        command_args = takescreens.compile_ffmpeg_command(command)
-        commands.append(" ".join(command_args))
-        output = Path(takescreens.get_ffmpeg_output_path(command, command_args))
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(b"animated webp")
-        return 0, b"", b""
-
-    monkeypatch.setattr(takescreens.ffmpeg, "probe", fake_probe)
-    monkeypatch.setattr(takescreens, "run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr(takescreens, "_xxx_contact_sheet_fontfile", lambda: "C:/Windows/Fonts/arial.ttf")
-    meta = Meta(base_dir=str(tmp_path), uuid="animated-xxx", category="XXX")
-
-    sheets = await takescreens.xxx_contact_sheets([str(video)], meta.uuid, meta.base_dir, meta)
-
-    assert len(sheets) == 1
-    assert Path(sheets[0]).suffix == ".webp"
-    # Tiles are decoded one per ffmpeg run so only one decoder is in memory.
-    *tile_commands, stack_command = commands
-    assert len(tile_commands) == 2
-    assert all(command.count(" -i ") == 1 for command in tile_commands)
-    assert all("ffv1" in command and "drawtext" in command for command in tile_commands)
-    assert stack_command.count(" -i ") == 2
-    assert "libwebp_anim" in stack_command
-    assert "-t 5.0" in stack_command
-    assert "hstack" in stack_command
-    # The intermediate clips are removed once the sheet is written.
-    assert not list((tmp_path / "tmp" / meta.uuid).glob("xxx-tiles-*"))
-
-
-@pytest.mark.asyncio
-async def test_animated_xxx_contact_sheet_stops_when_a_tile_fails(tmp_path, monkeypatch):
-    video = tmp_path / "Studio.Scene.mp4"
-    video.write_bytes(b"video")
-    takescreens._apply_config({"DEFAULT": {"xxx_contact_sheet_rows": 1, "xxx_contact_sheet_columns": 3, "xxx_contact_sheet_animated_webp": True}})
-    commands = []
-
-    def fake_probe(_path):
-        return {"format": {"duration": "60"}, "streams": [{"codec_type": "video"}]}
-
-    async def fake_run_ffmpeg(command):
-        command_args = takescreens.compile_ffmpeg_command(command)
-        commands.append(" ".join(command_args))
-        output = Path(takescreens.get_ffmpeg_output_path(command, command_args))
-        if len(commands) == 3:
-            # run_ffmpeg writes its report beside the output.
-            (output.parent / "ffmpeg-failed.log").write_text("decoder error")
-            return 1, b"", b""
-        output.write_bytes(b"tile clip")
-        return 0, b"", b""
-
-    monkeypatch.setattr(takescreens.ffmpeg, "probe", fake_probe)
-    monkeypatch.setattr(takescreens, "run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr(takescreens, "_xxx_contact_sheet_fontfile", lambda: None)
-    meta = Meta(base_dir=str(tmp_path), uuid="failed-xxx", category="XXX")
-
-    sheets = await takescreens.xxx_contact_sheets([str(video)], meta.uuid, meta.base_dir, meta)
-
-    release_dir = tmp_path / "tmp" / meta.uuid
-    assert sheets == []
-    # The third tile fails after two clips exist; the stack step never runs.
-    assert len(commands) == 3
-    assert not any("libwebp_anim" in command for command in commands)
-    assert not list(release_dir.glob("xxx-tiles-*"))
-    # The failed tile's ffmpeg report outlives the removed tile directory.
-    assert (release_dir / "ffmpeg-failed.log").read_text() == "decoder error"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("rows", "columns"), [(2, 1), (1, 1)])
-async def test_animated_xxx_contact_sheet_skips_single_input_stacks(tmp_path, monkeypatch, rows, columns):
-    video = tmp_path / "Studio.Clip.mp4"
-    video.write_bytes(b"video")
     takescreens._apply_config(
-        {"DEFAULT": {"xxx_contact_sheet_rows": rows, "xxx_contact_sheet_columns": columns, "xxx_contact_sheet_animated_webp": True}}
+        {
+            "DEFAULT": {
+                "xxx_contact_sheet_rows": 1,
+                "xxx_contact_sheet_columns": 2,
+                "xxx_contact_sheet_animated_webp": True,
+            }
+        }
     )
     commands = []
 
     def fake_probe(_path):
-        return {"format": {"duration": "60"}, "streams": [{"codec_type": "video"}]}
+        return {"format": {"duration": "60"}}
 
     async def fake_run_ffmpeg(command):
         command_args = takescreens.compile_ffmpeg_command(command)
         commands.append(" ".join(command_args))
-        Path(takescreens.get_ffmpeg_output_path(command, command_args)).write_bytes(b"clip")
+        output = Path(
+            takescreens.get_ffmpeg_output_path(command, command_args)
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(b"animated webp")
         return 0, b"", b""
 
-    monkeypatch.setattr(takescreens.ffmpeg, "probe", fake_probe)
-    monkeypatch.setattr(takescreens, "run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr(takescreens, "_xxx_contact_sheet_fontfile", lambda: None)
-    meta = Meta(base_dir=str(tmp_path), uuid=f"stack-{rows}x{columns}", category="XXX")
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.ffmpeg.probe", fake_probe
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.run_ffmpeg", fake_run_ffmpeg
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture._xxx_contact_sheet_fontfile",
+        lambda: "C:/Windows/Fonts/arial.ttf",
+    )
+    meta = Meta(base_dir=str(tmp_path), uuid="animated-xxx", category="XXX")
 
-    sheets = await takescreens.xxx_contact_sheets([str(video)], meta.uuid, meta.base_dir, meta)
+    sheets = await takescreens.xxx_contact_sheets(
+        [str(video)], meta.uuid, meta.base_dir, meta
+    )
 
-    stack_command = commands[-1]
     assert len(sheets) == 1
-    # ffmpeg rejects hstack/vstack with inputs=1.
-    assert "hstack" not in stack_command
-    assert ("vstack=inputs=2" in stack_command) == (rows == 2)
-    assert "inputs=1" not in stack_command
-
-
-@pytest.mark.asyncio
-async def test_xxx_single_file_screens_stay_fixed_across_reruns(tmp_path, monkeypatch):
-    video = tmp_path / "Studio.Performer.mp4"
-    video.write_bytes(b"video")
-    takescreens._apply_config({"DEFAULT": {"xxx_contact_sheet_rows": 1, "xxx_contact_sheet_columns": 2, "xxx_single_file_screens": 2}})
-    requested = []
-
-    def fake_probe(_path):
-        return {"format": {"duration": "60"}, "streams": [{"codec_type": "video"}]}
-
-    async def fake_run_ffmpeg(command):
-        command_args = takescreens.compile_ffmpeg_command(command)
-        output = Path(takescreens.get_ffmpeg_output_path(command, command_args))
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(b"contact sheet")
-        return 0, b"", b""
-
-    async def fake_screenshots(_path, _filename, folder_id, base_dir, _meta, num_screens, force_screenshots, *_args, capture_group="main", **_kwargs):
-        requested.append((num_screens, force_screenshots))
-        existing = len(manifest_files(base_dir, folder_id, capture_group))
-        # A forced capture adds every requested frame; otherwise it tops up to the target.
-        target = existing + num_screens if force_screenshots else num_screens
-        frames = []
-        for index in range(existing, target):
-            frame = takescreens.screenshots_dir(base_dir, folder_id) / f"frame-{index}.png"
-            frame.write_bytes(b"frame")
-            frames.append(str(frame))
-        takescreens.register_screenshots(base_dir, folder_id, frames, capture_group)
-
-    monkeypatch.setattr(takescreens.ffmpeg, "probe", fake_probe)
-    monkeypatch.setattr(takescreens, "run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr(takescreens, "_xxx_contact_sheet_fontfile", lambda: "C:/Windows/Fonts/arial.ttf")
-    monkeypatch.setattr(takescreens, "screenshots", fake_screenshots)
-    meta = Meta(base_dir=str(tmp_path), uuid="xxx-rerun", category="XXX")
-
-    for _run in range(3):
-        await takescreens.xxx_contact_sheets([str(video)], meta.uuid, meta.base_dir, meta)
-
-    assert requested == [(3, False)] * 3
-    assert meta.screens == 3
-    assert len(manifest_files(meta.base_dir, meta.uuid, "main")) == 3
-
-    # Rehosting can still top up frames it has to replace.
-    await takescreens.xxx_contact_sheets([str(video)], meta.uuid, meta.base_dir, meta, extra_screens=2)
-
-    assert requested[-1] == (2, True)
-    assert meta.screens == 5
-
-
-@pytest.mark.asyncio
-async def test_xxx_fallback_cover_uses_a_video_frame(tmp_path, monkeypatch):
-    video = tmp_path / "OnlyFans.Creator.mp4"
-    video.write_bytes(b"video")
-    commands = []
-
-    def fake_probe(_path):
-        return {"format": {"duration": "60"}, "streams": [{"codec_type": "video"}]}
-
-    async def fake_run_ffmpeg(command):
-        command_args = takescreens.compile_ffmpeg_command(command)
-        commands.append(" ".join(command_args))
-        output = Path(takescreens.get_ffmpeg_output_path(command, command_args))
-        output.parent.mkdir(parents=True, exist_ok=True)
-        Image.new("RGB", (120, 80), "purple").save(output, format="PNG")
-        return 0, b"", b""
-
-    monkeypatch.setattr(takescreens.ffmpeg, "probe", fake_probe)
-    monkeypatch.setattr(takescreens, "run_ffmpeg", fake_run_ffmpeg)
-    meta = Meta(base_dir=str(tmp_path), uuid="fallback-cover", category="XXX")
-
-    cover = await takescreens.xxx_fallback_cover([str(video)], meta.uuid, meta.base_dir, meta)
-
-    assert cover == str(tmp_path / "tmp" / "fallback-cover" / "artwork" / "POSTER.png")
-    assert meta.artwork_path == cover
-    assert meta.artwork_url == ""
-    assert "scale=1200:-2:force_original_aspect_ratio=decrease" in commands[0]
-    assert "-ss 6.0" in commands[0]
-
-
-@pytest.mark.asyncio
-async def test_xxx_fallback_cover_skips_unprobeable_candidates(tmp_path, monkeypatch):
-    invalid = tmp_path / "release.mkv"
-    video = tmp_path / "OnlyFans.Creator.mp4"
-    invalid.write_bytes(b"nfo")
-    video.write_bytes(b"video")
-    probed = []
-
-    def fake_probe(path):
-        probed.append(Path(path).name)
-        if Path(path) == invalid:
-            return {"format": {"duration": "0"}, "streams": [{"codec_type": "video"}]}
-        return {"format": {"duration": "60"}, "streams": [{"codec_type": "video"}]}
-
-    async def fake_run_ffmpeg(command):
-        command_args = takescreens.compile_ffmpeg_command(command)
-        output = Path(takescreens.get_ffmpeg_output_path(command, command_args))
-        output.parent.mkdir(parents=True, exist_ok=True)
-        Image.new("RGB", (120, 80), "purple").save(output, format="PNG")
-        return 0, b"", b""
-
-    monkeypatch.setattr(takescreens.ffmpeg, "probe", fake_probe)
-    monkeypatch.setattr(takescreens, "run_ffmpeg", fake_run_ffmpeg)
-    meta = Meta(base_dir=str(tmp_path), uuid="fallback-candidate", category="XXX")
-
-    cover = await takescreens.xxx_fallback_cover([str(invalid), str(video)], meta.uuid, meta.base_dir, meta)
-
-    assert cover is not None
-    assert probed == [invalid.name, video.name]
-
-
-@pytest.mark.asyncio
-async def test_xxx_fallback_cover_skips_audio_only_candidates(tmp_path, monkeypatch):
-    audio = tmp_path / "release.mkv"
-    video = tmp_path / "OnlyFans.Creator.mp4"
-    audio.write_bytes(b"audio")
-    video.write_bytes(b"video")
-    probed = []
-
-    def fake_probe(path):
-        probed.append(Path(path).name)
-        if Path(path) == audio:
-            return {"format": {"duration": "42"}, "streams": [{"codec_type": "audio"}]}
-        return {"format": {"duration": "60"}, "streams": [{"codec_type": "video"}]}
-
-    async def fake_run_ffmpeg(command):
-        command_args = takescreens.compile_ffmpeg_command(command)
-        output = Path(takescreens.get_ffmpeg_output_path(command, command_args))
-        output.parent.mkdir(parents=True, exist_ok=True)
-        Image.new("RGB", (120, 80), "purple").save(output, format="PNG")
-        return 0, b"", b""
-
-    monkeypatch.setattr(takescreens.ffmpeg, "probe", fake_probe)
-    monkeypatch.setattr(takescreens, "run_ffmpeg", fake_run_ffmpeg)
-    meta = Meta(base_dir=str(tmp_path), uuid="fallback-audio-only", category="XXX")
-
-    cover = await takescreens.xxx_fallback_cover([str(audio), str(video)], meta.uuid, meta.base_dir, meta)
-
-    assert cover is not None
-    assert probed == [audio.name, video.name]
-
-
-def test_flat_release_keeps_its_first_videos_for_contact_sheets(tmp_path):
-    videos = [tmp_path / f"Scene.{index}.mp4" for index in range(5)]
-
-    assert takescreens._select_xxx_contact_sheet_videos(videos, 3) == videos[:3]
-
-
-def test_nested_pack_spreads_contact_sheets_across_folders(tmp_path):
-    part_one = [tmp_path / "Part 1" / f"Scene.{index}.mp4" for index in range(4)]
-    part_two = [tmp_path / "Part 2" / f"Scene.{index}.mp4" for index in range(4)]
-    part_three = [tmp_path / "Part 3" / "Scene.0.mp4"]
-    videos = [tmp_path / "Root.Scene.mp4", *part_one, *part_two, *part_three]
-
-    selected = takescreens._select_xxx_contact_sheet_videos(videos, 5)
-
-    # One from each folder first, then a second round.
-    assert selected == [videos[0], part_one[0], part_two[0], part_three[0], part_one[1]]
-
-
-def test_contact_sheet_selection_is_a_prefix_of_any_larger_limit(tmp_path):
-    # Cached sheets are reused by position, so a lower limit must not reorder them.
-    videos = [tmp_path / part / f"Scene.{index}.mp4" for part in ("Part 1", "Part 2", "Part 3") for index in range(3)]
-    selections = [takescreens._select_xxx_contact_sheet_videos(videos, limit) for limit in range(1, len(videos) + 2)]
-
-    for smaller, larger in zip(selections, selections[1:], strict=False):
-        assert larger[: len(smaller)] == smaller
-    assert sorted(selections[-1]) == sorted(videos)
-
-
-def test_contact_sheet_selection_ignores_duplicate_paths(tmp_path):
-    part_one = tmp_path / "Part 1" / "Scene.mp4"
-    part_two = tmp_path / "Part 2" / "Scene.mp4"
-
-    assert takescreens._select_xxx_contact_sheet_videos([part_one, part_one, part_one, part_two], 3) == [part_one, part_two]
-
-
-def test_nested_pack_contact_sheet_titles_show_the_subfolder(tmp_path):
-    root = tmp_path / "Studio Pack"
-    videos = [root / "Root.Scene.mp4", root / "Part 1" / "Scene.mp4"]
-
-    assert takescreens._xxx_contact_sheet_titles(videos, str(root)) == {videos[0]: "Root.Scene.mp4", videos[1]: "Part 1/Scene.mp4"}
-    assert takescreens._xxx_contact_sheet_titles(videos[1:], str(root)) == {videos[1]: "Scene.mp4"}
-    assert takescreens._xxx_contact_sheet_titles(videos, None) == {videos[0]: "Root.Scene.mp4", videos[1]: "Scene.mp4"}
-
-
-@pytest.mark.asyncio
-async def test_nested_pack_contact_sheets_cover_each_part(tmp_path, monkeypatch):
-    root = (tmp_path / "Studio Pack").resolve()
-    videos = []
-    for part in ("Part 1", "Part 2"):
-        for index in range(3):
-            video = root / part / f"Scene.{index}.mp4"
-            video.parent.mkdir(parents=True, exist_ok=True)
-            video.write_bytes(b"video")
-            videos.append(str(video))
-    takescreens._apply_config({"DEFAULT": {"xxx_contact_sheet_rows": 1, "xxx_contact_sheet_columns": 1, "xxx_contact_sheet_max_videos": 2}})
-    commands = []
-
-    def fake_probe(_path):
-        return {"format": {"duration": "60"}, "streams": [{"codec_type": "video"}]}
-
-    async def fake_run_ffmpeg(command):
-        command_args = takescreens.compile_ffmpeg_command(command)
-        commands.append(command_args)
-        output = Path(takescreens.get_ffmpeg_output_path(command, command_args))
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_bytes(b"contact sheet")
-        return 0, b"", b""
-
-    async def fake_record_event(_family, **_values):
-        return None
-
-    monkeypatch.setattr(takescreens.ffmpeg, "probe", fake_probe)
-    monkeypatch.setattr(takescreens, "run_ffmpeg", fake_run_ffmpeg)
-    monkeypatch.setattr(takescreens, "_xxx_contact_sheet_fontfile", lambda: "C:/Windows/Fonts/arial.ttf")
-    monkeypatch.setattr(takescreens, "record_event_async", fake_record_event)
-    meta = Meta(base_dir=str(tmp_path), uuid="nested-xxx", category="XXX", path=str(root), isdir=True)
-
-    sheets = await takescreens.xxx_contact_sheets(videos, meta.uuid, meta.base_dir, meta)
-
-    assert len(sheets) == 2
-    # The title is checked in the drawtext filter, not in the input path.
-    assert any("drawtext" in argument and "Part 1/Scene.0.mp4" in argument for argument in commands[0])
-    assert any("drawtext" in argument and "Part 2/Scene.0.mp4" in argument for argument in commands[1])
+    assert Path(sheets[0]).suffix == ".webp"
+    assert "libwebp_anim" in commands[0]
+    assert "-t 5.0" in commands[0]
+    assert "drawtext" in commands[0]

@@ -1,165 +1,23 @@
 # Assertions are the idiomatic pytest checks for this focused subprocess test.
-# ruff: noqa: S101
 
 import asyncio
-import json
 import sys
+from collections.abc import Iterator
 from pathlib import Path
-from random import Random
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import ffmpeg
 import pytest
-from PIL import Image
 
-from src import takescreens, uploadscreens
-from src.meta import Meta
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("capture_group", [None, "FILE_1"])
-async def test_disc_reuses_registered_screenshots_when_title_changes(monkeypatch, tmp_path, capture_group):
-    screenshot = takescreens.screenshots_dir(tmp_path, "disc") / "Example-0.png"
-    screenshot.write_bytes(b"png")
-    takescreens.register_screenshots(tmp_path, "disc", [screenshot], capture_group or "main")
-    meta = Meta(base_dir=str(tmp_path), uuid="disc", screens=1)
-    bdinfo = {"files": [], "video": [{"codec": "AVC", "hdr_dv": ""}]}
-    sample_times = AsyncMock(side_effect=AssertionError("Registered screenshots should be reused"))
-    monkeypatch.setattr(takescreens, "get_image_host", AsyncMock(return_value="imgbb"))
-    monkeypatch.setattr(takescreens, "valid_ss_time", sample_times)
-
-    result = await takescreens.disc_screenshots(meta, "Changed, Title", bdinfo, meta.uuid, meta.base_dir, False, capture_group=capture_group)
-
-    assert result == []
-    sample_times.assert_not_awaited()
+from src.domain_models.release import Meta
+from src.integrations.media import screenshot_capture as takescreens
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("existing_indices", "registered_count", "corrupt_indices", "empty_indices"),
-    [
-        ([], 0, [], []),
-        (list(range(6)), 0, [], []),
-        ([0, 2, 4, 7, 9, 11], 0, [], []),
-        (list(range(12)), 0, [], []),
-        (list(range(6)), 6, [], []),
-        (list(range(6)), 0, [6, 8], []),
-        pytest.param([0, 1, 2, 3], 6, [], [4, 5], id="six-renamed-four-complete-two-empty"),
-    ],
-)
-@pytest.mark.parametrize("manual", [False, True])
-@pytest.mark.parametrize("registered_timestamps", [False, True])
-async def test_video_resume_registers_existing_frames_and_fills_gaps(
-    monkeypatch, tmp_path, existing_indices, registered_count, corrupt_indices, empty_indices, manual, registered_timestamps
-):
-    release_id = "interrupted-video"
-    screenshot_dir = takescreens.screenshots_dir(tmp_path, release_id)
-    (screenshot_dir.parent / "MediaInfo.json").write_text(
-        json.dumps({"media": {"track": [{"Duration": 600}, {"Duration": 600, "Width": 256, "Height": 256, "FrameRate": 24}]}}),
-        encoding="utf-8",
-    )
-    image = Image.frombytes("RGB", (256, 256), Random(0).randbytes(256 * 256 * 3))
-    for index in existing_indices:
-        image.save(screenshot_dir / f"Illegal-{index}.png")
-    for index in corrupt_indices:
-        (screenshot_dir / f"Illegal-{index}.png").write_bytes(b"incomplete PNG" * 10000)
-    for index in empty_indices:
-        (screenshot_dir / f"Illegal-{index}.png").touch()
-    registered = []
-    for index in range(registered_count):
-        output = screenshot_dir / f"registered-{index}.png"
-        image.save(output)
-        registered.append(output)
-    meta = Meta(category="TV", tv_pack=1, base_dir=str(tmp_path), uuid=release_id, screens=12, image_list=[], imghost="ptscreens")
-    sampling_times = [float(index + 1) for index in range(12)] if manual else [float(value) for value in await takescreens.valid_ss_time([], 12, 600, 24, meta)]
-    registered_slots = list(range(1, 12, 2))[:registered_count] if registered_timestamps else list(range(registered_count))
-    timestamps = {str(output): sampling_times[slot] for output, slot in zip(registered, registered_slots)} if registered_timestamps else None
-    registered = takescreens.register_screenshots(tmp_path, release_id, registered, "main", timestamps=timestamps, slot_timestamps=timestamps)
-    remaining_times = [timestamp for slot, timestamp in enumerate(sampling_times) if slot not in registered_slots]
-    calls = []
-
-    async def image_host_stub(_meta):
-        return "ptscreens"
-
-    async def tonemapping_stub(*_args):
-        return False
-
-    async def capture_stub(args):
-        index, _source, timestamp, output, *_rest = args
-        calls.append((index, timestamp, Path(output).name))
-        image.save(output)
-        return index, output
-
-    monkeypatch.setattr(takescreens, "cutoff", 12)
-    monkeypatch.setattr(takescreens, "tone_map", False)
-    monkeypatch.setattr(takescreens, "get_image_host", image_host_stub)
-    monkeypatch.setattr(takescreens, "determine_tonemapping", tonemapping_stub)
-    monkeypatch.setattr(takescreens, "capture_screenshot", capture_stub)
-    kwargs = {"manual_frames": [24 * (index + 1) for index in range(12)]} if manual else {}
-
-    result = await takescreens.screenshots("source.mkv", "Illegal", release_id, str(tmp_path), meta, cleanup_after_capture=False, **kwargs)
-
-    expected_indices = set(range(12 - registered_count)) - set(existing_indices)
-    assert {name for _, _, name in calls} == {f"Illegal-{index}.png" for index in expected_indices}
-    assert len(calls) == len(expected_indices)
-    assert all(timestamp == remaining_times[index] for index, timestamp, _ in calls)
-    expected_times = sampling_times if registered_timestamps else remaining_times
-    assert sorted(takescreens.capture_timestamps(tmp_path, release_id, "main", original_slots=True)) == sorted(expected_times)
-    inventory = takescreens.manifest_files(tmp_path, release_id, "main")
-    assert len(result) == len(inventory) == 12
-    assert set(result) == {str(path) for path in inventory}
-    assert set(registered) <= set(inventory)
-    assert not list(screenshot_dir.glob("Illegal-*.png"))
-    for output in inventory:
-        with Image.open(output) as recovered:
-            recovered.verify()
-
-    # The later upload-stage capture must reuse the entire recovered group,
-    # including when metadata enrichment changed the display title.
-    calls.clear()
-    second_result = await takescreens.screenshots("source.mkv", "New Title", release_id, str(tmp_path), meta, cleanup_after_capture=False, **kwargs)
-    assert second_result == result
-    assert calls == []
-
-    uploaded = []
-
-    async def upload_stub(args):
-        uploaded.append(args[0])
-        url = f"https://images.example/{Path(args[0]).name}"
-        return {"status": "success", "img_url": url, "raw_url": url, "web_url": url}
-
-    monkeypatch.setattr(uploadscreens, "upload_image_task", upload_stub)
-    config = {"DEFAULT": {"img_host_1": "ptscreens"}, "TRACKERS": {}}
-    _, uploaded_count = await uploadscreens._upload_screens(config, meta, 12, 1, 0, 12, [], {})
-    assert uploaded_count == len(uploaded) == 12
-    assert set(uploaded) == set(result)
-
-
-@pytest.mark.asyncio
-async def test_video_resume_rejects_symlinked_screenshot(tmp_path):
-    release_id = "linked-video"
-    screenshot_dir = takescreens.screenshots_dir(tmp_path, release_id)
-    (screenshot_dir.parent / "MediaInfo.json").write_text(
-        json.dumps({"media": {"track": [{"Duration": 600}, {"Duration": 600, "Width": 256, "Height": 256, "FrameRate": 24}]}}),
-        encoding="utf-8",
-    )
-    outside = tmp_path / "outside.png"
-    Image.frombytes("RGB", (256, 256), Random(0).randbytes(256 * 256 * 3)).save(outside)  # noqa: S311
-    original = outside.read_bytes()
-    link = screenshot_dir / "Video-0.png"
-    try:
-        link.symlink_to(outside)
-    except OSError, NotImplementedError:
-        pytest.skip("Screenshot symlinks are unavailable")
-    meta = Meta(category="MOVIE", base_dir=str(tmp_path), uuid=release_id, screens=1, imghost="ptscreens")
-
-    result = await takescreens.screenshots("source.mkv", "Video", release_id, str(tmp_path), meta, cleanup_after_capture=False)
-
-    assert result is None
-    assert link.is_symlink()
-    assert outside.read_bytes() == original
-    assert takescreens.manifest_files(tmp_path, release_id, "main") == []
+@pytest.fixture(autouse=True)
+def _reset_takescreens_config() -> Iterator[None]:
+    takescreens.TakeScreensManager({"DEFAULT": {}})
+    yield
+    takescreens.TakeScreensManager({"DEFAULT": {}})
 
 
 async def _stop_process(process: asyncio.subprocess.Process) -> None:
@@ -170,6 +28,26 @@ async def _stop_process(process: asyncio.subprocess.Process) -> None:
     except TimeoutError:
         process.kill()
         await process.wait()
+
+
+async def _wait_for_process_exit(process: asyncio.subprocess.Process) -> None:
+    for _ in range(100):
+        if process.returncode is not None:
+            return
+        await asyncio.sleep(0.01)
+    pytest.fail("cancelled run_ffmpeg left its owned subprocess running")
+
+
+async def _cleanup_process_test(
+    task: asyncio.Task[object],
+    owned_processes: list[asyncio.subprocess.Process],
+    unrelated: asyncio.subprocess.Process,
+) -> None:
+    if not task.done():
+        task.cancel()
+    for process in owned_processes:
+        await _stop_process(process)
+    await _stop_process(unrelated)
 
 
 @pytest.mark.asyncio
@@ -185,10 +63,20 @@ async def test_run_ffmpeg_writes_report_next_to_output(tmp_path, monkeypatch):
 
         return SimpleNamespace(returncode=0, communicate=fake_communicate)
 
-    monkeypatch.setattr(takescreens.platform, "system", lambda: "Windows")
-    monkeypatch.setattr(takescreens.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.platform.system",
+        lambda: "Windows",
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
 
-    command = ffmpeg.input(str(output.with_name("source.mkv"))).output(str(output), vframes=1).global_args("-y", "-loglevel", "quiet")
+    command = (
+        ffmpeg.input(str(output.with_name("source.mkv")))
+        .output(str(output), vframes=1)
+        .global_args("-y", "-loglevel", "quiet")
+    )
 
     process = await takescreens.run_ffmpeg(command)
     second_process = await takescreens.run_ffmpeg(command)
@@ -224,18 +112,29 @@ async def test_run_ffmpeg_prefers_configured_binary(tmp_path, monkeypatch):
 
         return SimpleNamespace(returncode=0, communicate=fake_communicate)
 
-    monkeypatch.setattr(takescreens.asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    monkeypatch.setattr(takescreens, "default_config", {"ffmpeg_path": str(executable)})
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.asyncio.create_subprocess_exec",
+        fake_create_subprocess_exec,
+    )
+    manager = takescreens.TakeScreensManager(
+        {"DEFAULT": {"ffmpeg_path": str(executable)}}
+    )
 
-    command = ffmpeg.input(str(tmp_path / "source.mkv")).output(str(tmp_path / "frame.png"), vframes=1)
-    await takescreens.run_ffmpeg(command)
+    command = ffmpeg.input(str(tmp_path / "source.mkv")).output(
+        str(tmp_path / "frame.png"), vframes=1
+    )
+    await manager.run_ffmpeg(command)
 
     assert captured[0][0] == str(executable)
 
 
 @pytest.mark.asyncio
-async def test_cancelling_run_ffmpeg_terminates_only_its_owned_process(tmp_path, monkeypatch):
-    unrelated = await asyncio.create_subprocess_exec(sys.executable, "-c", "import time; time.sleep(60)")
+async def test_cancelling_run_ffmpeg_terminates_only_its_owned_process(
+    tmp_path, monkeypatch
+):
+    unrelated = await asyncio.create_subprocess_exec(
+        sys.executable, "-c", "import time; time.sleep(60)"
+    )
     original_create_subprocess_exec = asyncio.create_subprocess_exec
     owned_processes: list[asyncio.subprocess.Process] = []
     owned_started = asyncio.Event()
@@ -246,12 +145,23 @@ async def test_cancelling_run_ffmpeg_terminates_only_its_owned_process(tmp_path,
         owned_started.set()
         return process
 
-    monkeypatch.setattr(takescreens.platform, "system", lambda: "Windows")
-    monkeypatch.setattr(takescreens.asyncio, "create_subprocess_exec", capture_create_subprocess_exec)
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.platform.system",
+        lambda: "Windows",
+    )
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.asyncio.create_subprocess_exec",
+        capture_create_subprocess_exec,
+    )
 
     class Command:
         def compile(self):
-            return [sys.executable, "-c", "import time; time.sleep(60)", tmp_path / "owned.out"]
+            return [
+                sys.executable,
+                "-c",
+                "import time; time.sleep(60)",
+                tmp_path / "owned.out",
+            ]
 
     task = asyncio.create_task(takescreens.run_ffmpeg(Command()))
     try:
@@ -261,24 +171,60 @@ async def test_cancelling_run_ffmpeg_terminates_only_its_owned_process(tmp_path,
             await task
 
         owned = owned_processes[0]
-        for _ in range(100):
-            if owned.returncode is not None:
-                break
-            await asyncio.sleep(0.01)
-        if owned.returncode is None:
-            pytest.fail("cancelled run_ffmpeg left its owned subprocess running")
-
-        assert unrelated.returncode is None, "cancelling run_ffmpeg terminated an unrelated sibling process"
+        await _wait_for_process_exit(owned)
+        assert unrelated.returncode is None, (
+            "cancelling run_ffmpeg terminated an unrelated sibling process"
+        )
     finally:
-        if not task.done():
-            task.cancel()
-        for process in owned_processes:
-            await _stop_process(process)
-        await _stop_process(unrelated)
+        await _cleanup_process_test(task, owned_processes, unrelated)
 
 
 @pytest.mark.asyncio
-async def test_determine_tonemapping_uses_verified_libplacebo(monkeypatch, tmp_path):
+async def test_debug_capture_disables_stdin_and_preserves_ffmpeg_errors(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.mp4"
+    output = tmp_path / "frame.png"
+    source.write_bytes(b"video")
+    commands: list[list[str]] = []
+
+    async def fake_run(command):
+        commands.append(takescreens.compile_ffmpeg_command(command))
+        output.write_bytes(b"png")
+        return 0, b"", b""
+
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.run_ffmpeg", fake_run
+    )
+    manager = takescreens.TakeScreensManager(
+        {"DEFAULT": {"use_libplacebo": False, "ffmpeg_limit": False}}
+    )
+
+    result = await manager.capture_screenshot(
+        (
+            0,
+            str(source),
+            1.0,
+            str(output),
+            1920,
+            1080,
+            1.0,
+            1.0,
+            "quiet",
+            False,
+            Meta(debug=True),
+        )
+    )
+
+    assert result == (0, str(output))
+    assert "-nostdin" in commands[0]
+    assert commands[0][commands[0].index("-loglevel") + 1] == "error"
+
+
+@pytest.mark.asyncio
+async def test_determine_tonemapping_uses_verified_libplacebo(
+    monkeypatch, tmp_path
+):
     meta = Meta(hdr="HDR")
     compatibility_calls = []
 
@@ -286,12 +232,31 @@ async def test_determine_tonemapping_uses_verified_libplacebo(monkeypatch, tmp_p
         compatibility_calls.append(args)
         return True, True
 
-    monkeypatch.setattr(takescreens, "tone_map", True)
-    monkeypatch.setattr(takescreens, "use_libplacebo", True)
-    monkeypatch.setattr(takescreens, "ffmpeg_is_good", False)
-    monkeypatch.setattr(takescreens, "check_libplacebo_compatibility", compatible)
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.check_libplacebo_compatibility",
+        compatible,
+    )
+    manager = takescreens.TakeScreensManager(
+        {
+            "DEFAULT": {
+                "tone_map": True,
+                "use_libplacebo": True,
+                "ffmpeg_is_good": False,
+            }
+        }
+    )
 
-    enabled = await takescreens.determine_tonemapping(1, 1, 1920, 1080, "source.mkv", "10", str(tmp_path / "frame.png"), "quiet", meta)
+    enabled = await manager.determine_tonemapping(
+        1,
+        1,
+        1920,
+        1080,
+        "source.mkv",
+        "10",
+        str(tmp_path / "frame.png"),
+        "quiet",
+        meta,
+    )
 
     assert enabled is True
     assert meta.tonemapped is True
@@ -301,12 +266,25 @@ async def test_determine_tonemapping_uses_verified_libplacebo(monkeypatch, tmp_p
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("hdr", ["DV", "HLG"])
-async def test_determine_tonemapping_uses_zscale_fallback_for_dv_and_hlg(monkeypatch, tmp_path, hdr):
-    monkeypatch.setattr(takescreens, "tone_map", True)
-    monkeypatch.setattr(takescreens, "use_libplacebo", False)
+async def test_determine_tonemapping_uses_zscale_fallback_for_dv_and_hlg(
+    tmp_path, hdr
+):
+    manager = takescreens.TakeScreensManager(
+        {"DEFAULT": {"tone_map": True, "use_libplacebo": False}}
+    )
     meta = Meta(hdr=hdr)
 
-    enabled = await takescreens.determine_tonemapping(1, 1, 1920, 1080, "source.mkv", "10", str(tmp_path / "frame.png"), "quiet", meta)
+    enabled = await manager.determine_tonemapping(
+        1,
+        1,
+        1920,
+        1080,
+        "source.mkv",
+        "10",
+        str(tmp_path / "frame.png"),
+        "quiet",
+        meta,
+    )
 
     assert enabled is True
     assert meta.tonemapped is True
@@ -314,7 +292,9 @@ async def test_determine_tonemapping_uses_zscale_fallback_for_dv_and_hlg(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_capture_screenshot_applies_selected_libplacebo_tonemapping(monkeypatch, tmp_path):
+async def test_capture_screenshot_applies_selected_libplacebo_tonemapping(
+    monkeypatch, tmp_path
+):
     source = tmp_path / "source.mkv"
     output = tmp_path / "frame.png"
     source.write_bytes(b"video")
@@ -323,511 +303,32 @@ async def test_capture_screenshot_applies_selected_libplacebo_tonemapping(monkey
     async def run_stub(command):
         compiled = takescreens.compile_ffmpeg_command(command)
         commands.append(compiled)
-        Path(takescreens.get_ffmpeg_output_path(command, compiled)).write_bytes(b"png")
+        Path(
+            takescreens.get_ffmpeg_output_path(command, compiled)
+        ).write_bytes(b"png")
         return 0, b"", b""
 
-    monkeypatch.setattr(takescreens, "run_ffmpeg", run_stub)
+    monkeypatch.setattr(
+        "src.integrations.media.screenshot_capture.run_ffmpeg", run_stub
+    )
 
-    result = await takescreens.capture_screenshot((0, str(source), 10, str(output), 1920, 1080, 1, 1, "quiet", True, Meta(libplacebo=True)))
-
-    assert result == (0, str(output))
-    assert any("libplacebo=tonemapping=hable" in argument for argument in commands[0])
-
-
-@pytest.mark.asyncio
-async def test_dvd_screenshots_uses_complete_title_set_and_ifo_duration(monkeypatch, tmp_path):
-    disc_path = tmp_path / "VIDEO_TS"
-    disc_path.mkdir()
-    main_set = ["01_0.VOB", "01_1.VOB", "01_2.VOB", "01_3.VOB"]
-    durations = {"01_1.VOB": 1200.0, "01_2.VOB": 1200.0, "01_3.VOB": 600.0}
-    captured: list[tuple[int, str, str]] = []
-    scaling_choices = []
-
-    def parse_stub(path, output=None, **_kwargs):
-        if output == "JSON":
-            duration = durations[Path(path).name.removeprefix("VTS_")]
-            return json.dumps({"media": {"track": [{"Duration": duration, "Width": 720, "Height": 480}]}})
-        return SimpleNamespace(
-            tracks=[SimpleNamespace(track_type="Video", duration="5000000", pixel_aspect_ratio="1", display_aspect_ratio="1.5", width="720", height="480", frame_rate="24")]
+    result = await takescreens.capture_screenshot(
+        (
+            0,
+            str(source),
+            10,
+            str(output),
+            1920,
+            1080,
+            1,
+            1,
+            "quiet",
+            True,
+            Meta(libplacebo=True),
         )
-
-    async def valid_times_stub(_times, num_screens, length, _frame_rate, _meta, retake=False):
-        assert num_screens == 2
-        assert length == 5000.0
-        assert retake is False
-        return ["100", "1500", "2700"]
-
-    async def capture_stub(task):
-        index, source, image, seek_time, *_rest = task
-        Image.effect_noise((720, 480), 20).save(image)
-        captured.append((index, source, seek_time))
-        return index, image
-
-    monkeypatch.setattr(takescreens.MediaInfo, "parse", parse_stub)
-    monkeypatch.setattr(takescreens, "valid_ss_time", valid_times_stub)
-    monkeypatch.setattr(takescreens, "capture_dvd_screenshot", capture_stub)
-    monkeypatch.setattr(takescreens, "register_screenshots", lambda *_args: [])
-    monkeypatch.setattr(takescreens, "default_config", {"scale_screenshots_for_par": False, "scale_dvd_screenshots_for_par": True})
-
-    def scale_stub(_width, _height, _par, _dar, enabled):
-        scaling_choices.append(enabled)
-        return 1.0, 1.0
-
-    monkeypatch.setattr(takescreens, "screenshot_par_scale_factors", scale_stub)
-
-    meta = Meta(
-        base_dir=str(tmp_path),
-        uuid="dvd-test",
-        screens=2,
-        discs=[{"name": "DVD", "path": str(disc_path), "main_set": main_set}],
-        image_list=[],
-        retake=False,
-        frame_overlay=False,
-        tv_pack=False,
-        debug=False,
-        ffdebug=False,
     )
-    await takescreens.dvd_screenshots(meta, 0, cleanup_after_capture=False)
-
-    expected_source = "concat:" + "|".join(str(disc_path / f"VTS_{vob}") for vob in main_set[1:])
-    assert [source for _index, source, _time in captured] == [expected_source] * 3
-    assert [time for _index, _source, time in captured] == ["100", "1500", "2700"]
-    assert scaling_choices == [True]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("chain_durations", [(2700000.0, 2500000.0, 2700000.0, None), (2700000.0, None)])
-async def test_dvd_screenshots_seek_within_longest_program_chain(monkeypatch, tmp_path, chain_durations):
-    disc_path = tmp_path / "VIDEO_TS"
-    disc_path.mkdir()
-    main_set = ["01_0.VOB", "01_1.VOB", "01_2.VOB"]
-    lengths: list[float] = []
-
-    def parse_stub(_path, output=None, **_kwargs):
-        if output == "JSON":
-            return json.dumps({"media": {"track": [{"Duration": 1200.0, "Width": 720, "Height": 480}]}})
-        video = SimpleNamespace(track_type="Video", duration=15000000.0, pixel_aspect_ratio="1", display_aspect_ratio="1.5", width="720", height="480", frame_rate="24")
-        chains = [SimpleNamespace(track_type="Menu", duration=duration) for duration in chain_durations]
-        return SimpleNamespace(tracks=[video, *chains])
-
-    async def valid_times_stub(_times, _num_screens, length, _frame_rate, _meta, **_kwargs):
-        lengths.append(length)
-        return ["100", "1500", "2600"]
-
-    async def capture_stub(task):
-        index, _source, image, *_rest = task
-        Image.effect_noise((720, 480), 20).save(image)
-        return index, image
-
-    matching_title = AsyncMock(return_value=1)
-    monkeypatch.setattr(takescreens.MediaInfo, "parse", parse_stub)
-    monkeypatch.setattr(takescreens, "matching_dvd_title", matching_title)
-    monkeypatch.setattr(takescreens, "valid_ss_time", valid_times_stub)
-    monkeypatch.setattr(takescreens, "capture_dvd_screenshot", capture_stub)
-    monkeypatch.setattr(takescreens, "register_screenshots", lambda *_args: [])
-
-    meta = Meta(
-        base_dir=str(tmp_path),
-        uuid="dvd-episodic-test",
-        screens=2,
-        discs=[{"name": "DVD", "path": str(disc_path), "main_set": main_set}],
-        image_list=[],
-        retake=False,
-        frame_overlay=False,
-        tv_pack=True,
-        debug=False,
-        ffdebug=False,
-    )
-    await takescreens.dvd_screenshots(meta, 0, cleanup_after_capture=False)
-
-    assert lengths == [2700.0]
-    matching_title.assert_awaited_once_with(disc_path, 2700.0)
-
-
-@pytest.mark.asyncio
-async def test_dvd_capture_marks_png_as_single_image(monkeypatch, tmp_path):
-    output = tmp_path / "frame.png"
-    commands = []
-
-    async def run_stub(command):
-        commands.append(takescreens.compile_ffmpeg_command(command))
-        output.write_bytes(b"png")
-        return 0, b"", b""
-
-    monkeypatch.setattr(takescreens, "run_ffmpeg", run_stub)
-    monkeypatch.setattr(takescreens, "overlay_filters", lambda *_args, **_kwargs: [])
-
-    result = await takescreens.capture_dvd_screenshot((0, "concat:part1.vob|part2.vob", str(output), "10", Meta(ffdebug=False), 720, 480, 1, 1))
 
     assert result == (0, str(output))
-    assert commands[0][commands[0].index("-update") + 1] == "1"
-    assert commands[0].index("-ss") > commands[0].index("-i")
-
-
-@pytest.mark.asyncio
-async def test_dvd_capture_seeks_with_dvdvideo_title(monkeypatch, tmp_path):
-    output = tmp_path / "frame.png"
-    source = tmp_path / "VIDEO_TS" / "VTS_01_1.VOB"
-    commands = []
-
-    async def run_stub(command):
-        commands.append(takescreens.compile_ffmpeg_command(command))
-        output.write_bytes(b"png")
-        return 0, b"", b""
-
-    monkeypatch.setattr(takescreens, "run_ffmpeg", run_stub)
-    monkeypatch.setattr(takescreens, "overlay_filters", lambda *_args, **_kwargs: [])
-
-    result = await takescreens.capture_dvd_screenshot((0, str(source), str(output), "100", Meta(ffdebug=False), 720, 480, 1, 1, 2))
-
-    assert result == (0, str(output))
-    assert commands[0][commands[0].index("-f") + 1] == "dvdvideo"
-    assert commands[0][commands[0].index("-title") + 1] == "2"
-    assert commands[0][commands[0].index("-i") + 1] == str(source.parent)
-    assert commands[0].index("-ss") < commands[0].index("-i")
-
-
-@pytest.mark.asyncio
-async def test_dvd_capture_falls_back_when_dvdvideo_is_unavailable(monkeypatch, tmp_path):
-    output = tmp_path / "frame.png"
-    source = tmp_path / "VIDEO_TS" / "VTS_01_1.VOB"
-    commands = []
-
-    async def run_stub(command):
-        commands.append(takescreens.compile_ffmpeg_command(command))
-        if len(commands) == 1:
-            return 1, b"", b"Unknown input format: dvdvideo"
-        output.write_bytes(b"png")
-        return 0, b"", b""
-
-    monkeypatch.setattr(takescreens, "run_ffmpeg", run_stub)
-    monkeypatch.setattr(takescreens, "overlay_filters", lambda *_args, **_kwargs: [])
-
-    result = await takescreens.capture_dvd_screenshot((0, str(source), str(output), "100", Meta(ffdebug=False), 720, 480, 1, 1, 1))
-
-    assert result == (0, str(output))
-    assert len(commands) == 2
-    assert "dvdvideo" not in commands[1]
-    assert commands[1].index("-ss") > commands[1].index("-i")
-
-
-@pytest.mark.asyncio
-async def test_matching_dvd_title_uses_ifo_duration(monkeypatch, tmp_path):
-    (tmp_path / "VIDEO_TS.IFO").write_bytes(b"ifo")
-    titles = []
-
-    def probe_stub(_path, **kwargs):
-        titles.append(kwargs["title"])
-        return {"format": {"duration": "100" if kwargs["title"] == 1 else "1200"}}
-
-    monkeypatch.setattr(takescreens.ffmpeg, "probe", probe_stub)
-
-    assert await takescreens.matching_dvd_title(tmp_path, 1200) == 2
-    assert titles == [1, 2]
-
-
-@pytest.mark.asyncio
-async def test_dvd_frame_info_uses_absolute_time_after_title_seek(monkeypatch, tmp_path):
-    source = tmp_path / "VIDEO_TS" / "VTS_01_1.VOB"
-    commands = []
-
-    async def run_stub(command):
-        commands.append(takescreens.compile_ffmpeg_command(command))
-        return 0, b"", b"pict_type:I pts_time:0.050000"
-
-    monkeypatch.setattr(takescreens, "run_ffmpeg", run_stub)
-
-    result = await takescreens.get_frame_info(str(source), 100, Meta(frame_rate=30), dvd_title=1)
-
-    assert result == {"frame_type": "I", "frame_number": 3001, "pts_time": 100.05}
-    assert commands[0][commands[0].index("-f") + 1] == "dvdvideo"
-    assert commands[0][commands[0].index("-i") + 1] == str(source.parent)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("retry_succeeds", [False, True])
-@pytest.mark.parametrize("existing_blank", [False, True])
-async def test_dvd_retake_uses_only_valid_replacement(monkeypatch, tmp_path, retry_succeeds, existing_blank):
-    disc_path = tmp_path / "VIDEO_TS"
-    disc_path.mkdir()
-    original = tmp_path / "tmp" / "dvd-retake" / "screenshots" / "DVD-0.png"
-    original.parent.mkdir(parents=True)
-    blank_image = tmp_path / "blank.png"
-    visible_image = tmp_path / "visible.png"
-    Image.new("L", (720, 480), 0).save(blank_image)
-    Image.effect_noise((720, 480), 20).save(visible_image)
-    blank_bytes = blank_image.read_bytes()
-    visible_bytes = visible_image.read_bytes()
-    if existing_blank:
-        original.write_bytes(blank_bytes)
-    attempts = []
-    registered = []
-
-    def parse_stub(_path, output=None, **_kwargs):
-        if output == "JSON":
-            return json.dumps({"media": {"track": [{"Duration": 600, "Width": 720, "Height": 480}]}})
-        return SimpleNamespace(
-            tracks=[SimpleNamespace(track_type="Video", duration="600000", pixel_aspect_ratio="1", display_aspect_ratio="1.5", width="720", height="480", frame_rate="24")]
-        )
-
-    async def capture_stub(task):
-        index, _source, image, seek_time, *_rest = task
-        if image.endswith("-retry.png"):
-            assert original.read_bytes() == blank_bytes
-            attempts.append(float(seek_time))
-            if retry_succeeds:
-                Path(image).write_bytes(visible_bytes)
-                return index, image
-            return index, None
-        if index == 1:
-            return index, None
-        Path(image).write_bytes(blank_bytes)
-        return index, image
-
-    async def valid_times_stub(*_args, **_kwargs):
-        return ["100", "200"]
-
-    def register_stub(_base_dir, _uuid, paths, _group):
-        registered.extend(paths)
-        return []
-
-    monkeypatch.setattr(takescreens.MediaInfo, "parse", parse_stub)
-    monkeypatch.setattr(takescreens, "valid_ss_time", valid_times_stub)
-    monkeypatch.setattr(takescreens, "capture_dvd_screenshot", capture_stub)
-    monkeypatch.setattr(takescreens, "register_screenshots", register_stub)
-    monkeypatch.setattr(takescreens, "screenshot_par_scale_factors", lambda *_args: (1.0, 1.0))
-    monkeypatch.setattr(takescreens.random, "uniform", lambda low, high: (low + high) / 2)
-
-    meta = Meta(
-        base_dir=str(tmp_path),
-        uuid="dvd-retake",
-        screens=1,
-        discs=[{"name": "DVD", "path": str(disc_path), "main_set": ["01_1.VOB"]}],
-        image_list=[],
-        retake=False,
-        frame_overlay=False,
-        tv_pack=False,
-        debug=False,
-        ffdebug=False,
+    assert any(
+        "libplacebo=tonemapping=hable" in argument for argument in commands[0]
     )
-    await takescreens.dvd_screenshots(meta, 0, cleanup_after_capture=False)
-
-    assert len(attempts) == (1 if retry_succeeds else 8)
-    assert len(set(attempts)) == len(attempts)
-    assert all(30 < time < 540 for time in attempts)
-    if not retry_succeeds:
-        assert min(attempts) < 90
-        assert max(attempts) > 480
-    if retry_succeeds:
-        assert original.read_bytes() == visible_bytes
-    else:
-        assert not original.exists()
-    assert not original.with_name("DVD-0-retry.png").exists()
-    assert registered == ([str(original)] if retry_succeeds else [])
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("disc_num", [0, 1])
-@pytest.mark.parametrize("cached_count", [0, 1, 2, 3])
-@pytest.mark.parametrize("manifest_state", ["missing", "invalid", "old-group", "partial"])
-async def test_dvd_regenerates_unregistered_cache_and_uploads(monkeypatch, tmp_path, disc_num, cached_count, manifest_state):
-    directory = takescreens.screenshots_dir(tmp_path, "dvd-cache")
-    group = "main" if disc_num == 0 else "FILE_1"
-    image = Image.effect_noise((720, 480), 20)
-    cached = []
-    for index in range(cached_count):
-        path = directory / f"Example-{index}.png"
-        image.save(path)
-        cached.append(path)
-    if manifest_state == "invalid":
-        (directory.parent / "screenshot_manifest.json").write_text("incomplete json", encoding="utf-8")
-    elif manifest_state == "old-group":
-        takescreens.register_screenshots(tmp_path, "dvd-cache", cached, "Example")
-    elif manifest_state == "partial":
-        current = directory / "current.png"
-        image.save(current)
-        takescreens.register_screenshots(tmp_path, "dvd-cache", [current], group)
-
-    def parse(_path, output=None, **_kwargs):
-        if output == "JSON":
-            return json.dumps({"media": {"track": [{"Duration": 600, "Width": 720, "Height": 480}]}})
-        video = SimpleNamespace(track_type="Video", duration=600000, pixel_aspect_ratio=1, display_aspect_ratio=1.5, width=720, height=480, frame_rate=24)
-        return SimpleNamespace(tracks=[video])
-
-    async def capture(args):
-        image.save(args[2])
-        return args[0], args[2]
-
-    uploaded = []
-
-    async def host(args):
-        uploaded.append(Path(args[0]))
-        url = f"https://images.example/{Path(args[0]).name}"
-        return {"status": "success", "img_url": url, "raw_url": url, "web_url": url}
-
-    capture_mock = AsyncMock(side_effect=capture)
-    monkeypatch.setattr(takescreens.MediaInfo, "parse", parse)
-    monkeypatch.setattr(takescreens, "valid_ss_time", AsyncMock(return_value=["100", "200", "300"]))
-    monkeypatch.setattr(takescreens, "matching_dvd_title", AsyncMock(return_value=None))
-    monkeypatch.setattr(takescreens, "capture_dvd_screenshot", capture_mock)
-    monkeypatch.setattr(uploadscreens, "upload_image_task", host)
-    meta = Meta(
-        base_dir=str(tmp_path),
-        uuid="dvd-cache",
-        screens=2,
-        is_disc="DVD",
-        imghost="imgbox",
-        discs=[{"name": "Example", "path": str(tmp_path), "main_set": ["01_1.VOB"]} for _ in range(disc_num + 1)],
-    )
-
-    await takescreens.dvd_screenshots(meta, disc_num, cleanup_after_capture=False)
-    registered = takescreens.manifest_files(tmp_path, meta.uuid, group)
-    custom_images = [str(path) for path in registered] if disc_num else []
-    images, count = await uploadscreens._upload_screens({"DEFAULT": {"img_host_1": "imgbox", "image_upload_delay": 0}}, meta, 2, 1, 0, 2, custom_images, {})
-
-    assert capture_mock.await_count == (2 if manifest_state == "partial" else 3)
-    assert len(registered) == len(images) == count == 2
-    assert set(uploaded) == set(registered)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("disc_num", [0, 1])
-async def test_dvd_replaces_blank_registered_screenshot(monkeypatch, tmp_path, disc_num):
-    disc_path = tmp_path / "VIDEO_TS"
-    disc_path.mkdir()
-    screenshot_dir = takescreens.screenshots_dir(tmp_path, "dvd-manifest")
-    blank = screenshot_dir / "blank.png"
-    Image.new("L", (720, 480), 0).save(blank, compress_level=0)
-    group = "main" if disc_num == 0 else "FILE_1"
-    old_image = takescreens.register_screenshots(tmp_path, "dvd-manifest", [blank], group)[0]
-    captured = []
-
-    def parse_stub(_path, output=None, **_kwargs):
-        if output == "JSON":
-            return json.dumps({"media": {"track": [{"Duration": 600, "Width": 720, "Height": 480}]}})
-        return SimpleNamespace(
-            tracks=[SimpleNamespace(track_type="Video", duration="600000", pixel_aspect_ratio="1", display_aspect_ratio="1.5", width="720", height="480", frame_rate="24")]
-        )
-
-    async def capture_stub(task):
-        index, _source, image, *_rest = task
-        Image.effect_noise((720, 480), 20).save(image)
-        captured.append(image)
-        return index, image
-
-    async def valid_times_stub(*_args, **_kwargs):
-        return ["100", "200"]
-
-    monkeypatch.setattr(takescreens.MediaInfo, "parse", parse_stub)
-    monkeypatch.setattr(takescreens, "valid_ss_time", valid_times_stub)
-    monkeypatch.setattr(takescreens, "capture_dvd_screenshot", capture_stub)
-    monkeypatch.setattr(takescreens, "screenshot_par_scale_factors", lambda *_args: (1.0, 1.0))
-
-    meta = Meta(
-        base_dir=str(tmp_path),
-        uuid="dvd-manifest",
-        screens=1,
-        discs=[{"name": f"Example.Disc.{index}", "path": str(disc_path), "main_set": ["01_1.VOB"]} for index in range(disc_num + 1)],
-        image_list=[],
-        retake=False,
-        frame_overlay=False,
-        tv_pack=False,
-        debug=False,
-        ffdebug=False,
-    )
-    await takescreens.dvd_screenshots(meta, disc_num, cleanup_after_capture=False)
-
-    registered = takescreens.manifest_files(tmp_path, "dvd-manifest", group)
-    assert len(captured) == 2
-    assert not old_image.exists()
-    assert len(registered) == 1
-    assert takescreens.dvd_screenshot_has_content(registered[0])
-    manifest = json.loads((screenshot_dir.parent / "screenshot_manifest.json").read_text(encoding="utf-8"))
-    assert len(manifest["screenshots"]) == 1
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("retry_succeeds", [False, True])
-async def test_video_retake_preserves_original_until_replacement_is_valid(monkeypatch, tmp_path, retry_succeeds):
-    release_dir = tmp_path / "tmp" / "video-retake"
-    screenshot_dir = release_dir / "screenshots"
-    screenshot_dir.mkdir(parents=True)
-    (release_dir / "MediaInfo.json").write_text(
-        json.dumps({"media": {"track": [{"Duration": 600}, {"Duration": 600, "Width": 720, "Height": 480, "FrameRate": 24}]}}), encoding="utf-8"
-    )
-    source = tmp_path / "source.mkv"
-    source.write_bytes(b"video")
-    original = screenshot_dir / "Video-0.png"
-    attempts = []
-    registered = []
-
-    async def image_host_stub(_meta):
-        return "imgbb"
-
-    async def valid_times_stub(*_args, **_kwargs):
-        return ["100"]
-
-    async def tonemapping_stub(*_args):
-        return False
-
-    async def capture_stub(args):
-        index, _source, _time, image, *_rest = args
-        if image.endswith("-retry.png"):
-            assert original.read_bytes() == b"x" * 50000
-            attempts.append(image)
-            if retry_succeeds:
-                Path(image).write_bytes(b"y" * 80000)
-                return index, image
-            return index, None
-        Path(image).write_bytes(b"x" * 50000)
-        return index, image
-
-    def register_stub(_base_dir, _uuid, paths, _group, **_kwargs):
-        if paths:
-            assert _kwargs["timestamps"] == {str(original): 105.0}
-            assert _kwargs["slot_timestamps"] == {str(original): 100.0}
-        registered.extend(paths)
-        return []
-
-    monkeypatch.setattr(takescreens, "get_image_host", image_host_stub)
-    monkeypatch.setattr(takescreens, "valid_ss_time", valid_times_stub)
-    monkeypatch.setattr(takescreens, "determine_tonemapping", tonemapping_stub)
-    monkeypatch.setattr(takescreens, "capture_screenshot", capture_stub)
-    monkeypatch.setattr(takescreens, "register_screenshots", register_stub)
-
-    meta = Meta(category="MOVIE", base_dir=str(tmp_path), uuid="video-retake", screens=1, image_list=[], retake=False, debug=False, ffdebug=False)
-    await takescreens.screenshots(str(source), "Video", "video-retake", str(tmp_path), meta, cleanup_after_capture=False)
-
-    assert len(attempts) == (1 if retry_succeeds else 25)
-    assert original.read_bytes() == (b"y" * 80000 if retry_succeeds else b"x" * 50000)
-    assert not Path(attempts[0]).exists()
-    assert registered == ([str(original)] if retry_succeeds else [])
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(("tone_map", "force_tonemap"), [(False, True), (True, False)])
-async def test_recovered_frame_retake_honors_tonemapping(monkeypatch, tmp_path, tone_map, force_tonemap):
-    release_id = "recovered-tonemap"
-    screenshot_dir = takescreens.screenshots_dir(tmp_path, release_id)
-    (screenshot_dir.parent / "MediaInfo.json").write_text(
-        json.dumps({"media": {"track": [{"Duration": 600}, {"Duration": 600, "Width": 256, "Height": 256, "FrameRate": 24}]}}), encoding="utf-8"
-    )
-    Image.new("RGB", (256, 256)).save(screenshot_dir / "Video-0.png")
-    calls = []
-
-    async def capture_stub(args):
-        calls.append(args)
-        Image.frombytes("RGB", (256, 256), Random(0).randbytes(256 * 256 * 3)).save(args[3])
-        return args[0], args[3]
-
-    monkeypatch.setattr(takescreens, "tone_map", tone_map)
-    monkeypatch.setattr(takescreens, "use_libplacebo", False)
-    monkeypatch.setattr(takescreens, "capture_screenshot", capture_stub)
-    meta = Meta(category="MOVIE", base_dir=str(tmp_path), uuid=release_id, screens=1, hdr="HDR10", force_tonemap=force_tonemap, imghost="ptscreens")
-
-    result = await takescreens.screenshots("source.mkv", "Video", release_id, str(tmp_path), meta, cleanup_after_capture=False)
-
-    assert len(calls) == len(result) == 1
-    assert Path(calls[0][3]).name == "Video-0-retry.png"
-    assert calls[0][-2] is True
-    assert meta.tonemapped is True

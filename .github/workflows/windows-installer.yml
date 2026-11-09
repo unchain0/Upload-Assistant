@@ -1,0 +1,96 @@
+name: Build Windows installer
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag, branch, or commit to package"
+        required: true
+        default: "development"
+        type: string
+      version:
+        description: "Version shown by the installer"
+        required: true
+        default: "development"
+        type: string
+      release_tag:
+        description: "Existing release tag to receive the installer (optional)"
+        required: false
+        type: string
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - name: Validate manual release attachment
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        shell: pwsh
+        env:
+          SOURCE_REF: ${{ inputs.ref }}
+          INSTALLER_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          if ($env:SOURCE_REF -ne $env:RELEASE_TAG -or $env:INSTALLER_VERSION -ne $env:RELEASE_TAG) {
+            throw 'ref, version, and release_tag must match when attaching an installer to a release.'
+          }
+
+      - name: Checkout source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref || github.sha }}
+          fetch-depth: 0
+
+      - name: Prepare installer payload
+        shell: pwsh
+        env:
+          UA_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.version || github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path build/payload/source | Out-Null
+          git archive --format=zip --output build/payload/source.zip HEAD
+          Expand-Archive -LiteralPath build/payload/source.zip -DestinationPath build/payload/source -Force
+          "UA_VERSION=$env:UA_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress --yes
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          Push-Location scripts
+          try {
+            $compiler = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+            if (-not $compiler) {
+              $compiler = Get-ChildItem -Path 'C:\Program Files\Inno Setup *\ISCC.exe', 'C:\Program Files (x86)\Inno Setup *\ISCC.exe' -ErrorAction Stop |
+                Sort-Object FullName -Descending |
+                Select-Object -First 1
+            }
+            if (-not $compiler) { throw 'ISCC.exe was not found after installing Inno Setup.' }
+            & $compiler.Source windows-installer.iss
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Upload workflow artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Upload-Assistant-Windows-Setup-${{ env.UA_VERSION }}
+          path: build/output/*.exe
+          if-no-files-found: error
+
+      - name: Attach installer to release
+        if: github.event_name == 'release' || inputs.release_tag != ''
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.release_tag }}
+          files: build/output/*.exe

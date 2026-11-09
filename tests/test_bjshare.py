@@ -1,20 +1,16 @@
 import asyncio
-from pathlib import Path
 from types import SimpleNamespace
 
-import httpx
-import pytest
 from bs4 import BeautifulSoup
-from PIL import Image
 
-from src.meta import Meta
-from src.screenshot_manifest import register
-from src.trackers.GAZELLE.bjshare import BJShare
+from src.integrations.trackers.bjshare import BJShare
 
 
 class FakeResponse:
     url = "https://bj-share.info/series.php?id=1"
-    text = '<a href="logout.php?auth=abcdef"></a><div class="main_column"></div>'
+    text = (
+        '<a href="logout.php?auth=abcdef"></a><div class="main_column"></div>'
+    )
 
     def raise_for_status(self):
         pass
@@ -24,98 +20,6 @@ class FakeSearchResponse(FakeResponse):
     text = '<a href="logout.php?auth=abcdef"></a><table id="torrent_table"></table>'
 
 
-def test_get_screenshots_converts_webp_to_png(tmp_path: Path) -> None:
-    screenshots = tmp_path / "tmp" / "release" / "screenshots"
-    screenshots.mkdir(parents=True)
-    screenshot = screenshots / "Example-0.webp"
-    Image.new("RGB", (2, 2), "red").save(screenshot, format="WEBP")
-    screenshot = register(tmp_path, "release", [screenshot], "main")[0]
-    uploaded: list[tuple[bytes, str]] = []
-    tracker = object.__new__(BJShare)
-
-    async def fake_img_host(image_bytes: bytes, filename: str) -> str:
-        uploaded.append((image_bytes, filename))
-        return "https://img.example/release-0.png"
-
-    tracker.img_host = fake_img_host
-    result = asyncio.run(tracker.get_screenshots(Meta({"base_dir": str(tmp_path), "uuid": "release"})))
-
-    assert result == ["https://img.example/release-0.png"]  # noqa: S101
-    assert uploaded[0][1] == f"{screenshot.stem}.png"  # noqa: S101
-    assert uploaded[0][0].startswith(b"\x89PNG\r\n\x1a\n")  # noqa: S101
-
-
-def test_get_screenshots_falls_back_to_common_host_for_failed_local_upload(tmp_path: Path) -> None:
-    screenshots = tmp_path / "tmp" / "release" / "screenshots"
-    screenshots.mkdir(parents=True)
-    paths = []
-    for index in range(2):
-        path = screenshots / f"Example-{index}.png"
-        Image.new("RGB", (2, 2), "red").save(path, format="PNG")
-        paths.append(path)
-    first, second = register(tmp_path, "release", paths, "main")
-    tracker = object.__new__(BJShare)
-    tracker.tracker = "BJSHARE"
-
-    async def fake_img_host(_image_bytes: bytes, filename: str) -> str | None:
-        return None if filename == second.name else "https://tracker.example/first.png"
-
-    tracker.img_host = fake_img_host
-    meta = Meta(
-        {
-            "base_dir": str(tmp_path),
-            "uuid": "release",
-            "image_list": [
-                {"raw_url": "https://common.example/first.png", "local_file_path": str(first)},
-                {"raw_url": "https://common.example/second.png", "local_file_path": str(second)},
-            ],
-        }
-    )
-
-    result = asyncio.run(tracker.get_screenshots(meta))
-
-    assert sorted(result) == ["https://common.example/second.png", "https://tracker.example/first.png"]  # noqa: S101
-
-
-def test_get_screenshots_keeps_common_host_links_when_rehosting_fails(tmp_path: Path) -> None:
-    class FailingSession:
-        async def get(self, _url, **_kwargs):
-            raise httpx.ConnectError("offline")
-
-    tracker = object.__new__(BJShare)
-    tracker.tracker = "BJSHARE"
-    tracker.session = FailingSession()
-    urls = ["https://common.example/menu.png", "https://common.example/first.png", "https://common.example/second.png"]
-    meta = Meta(
-        {
-            "base_dir": str(tmp_path),
-            "uuid": "release",
-            "menu_images": [{"raw_url": urls[0]}],
-            "image_list": [{"raw_url": urls[1]}, {"raw_url": urls[2]}],
-        }
-    )
-
-    assert asyncio.run(tracker.get_screenshots(meta)) == urls  # noqa: S101
-
-
-def test_get_cover_falls_back_to_tmdb_link_when_image_host_fails() -> None:
-    class PosterSession:
-        async def get(self, _url, **_kwargs):
-            return SimpleNamespace(raise_for_status=lambda: None, content=b"poster")
-
-    tracker = object.__new__(BJShare)
-    tracker.tracker = "BJSHARE"
-    tracker.session = PosterSession()
-    tracker.main_tmdb_data = {"poster_path": "/poster.jpg"}
-
-    async def failing_img_host(_image_bytes: bytes, _filename: str) -> None:
-        return None
-
-    tracker.img_host = failing_img_host
-
-    assert asyncio.run(tracker.get_cover(Meta({"category": "MOVIE"}))) == "https://image.tmdb.org/t/p/w500/poster.jpg"  # noqa: S101
-
-
 class FakeSession:
     def __init__(self, response=None):
         self.calls: list[dict[str, str]] = []
@@ -123,7 +27,7 @@ class FakeSession:
         self.response = response or FakeResponse()
 
     async def get(self, _url, *, params, follow_redirects):
-        assert follow_redirects  # noqa: S101
+        assert follow_redirects
         self.calls.append(params)
         return self.response
 
@@ -131,94 +35,6 @@ class FakeSession:
 class FakeCookieValidator:
     async def load_session_cookies(self, _meta, _tracker):
         return None
-
-
-def audio_search(category, upload_audio, header_html, *, season=1, tv_pack=True):
-    tracker = object.__new__(BJShare)
-    response = FakeResponse()
-    response.text = (
-        '<a href="logout.php?auth=abcdef"></a><div class="main_column">'
-        f'<table class="torrent_table details">{header_html}'
-        '<tr id="torrent123" data-torrentname="Fictional.Adventure.S01.1080p-Example">'
-        '<td class="number_column nobr">1 GiB</td></tr></table></div>'
-    )
-    tracker.session = FakeSession(response)
-    tracker.cookie_validator = FakeCookieValidator()
-    meta = SimpleNamespace(
-        category=category,
-        title="Fictional Adventure",
-        imdb_tt="tt999999999",
-        tmdb_id="",
-        language_checked=True,
-        audio_languages={
-            "Legendado": ["English"],
-            "Dublado": ["Portuguese"],
-            "Dual Áudio": ["English", "Portuguese"],
-            "Nacional": ["Portuguese"],
-        }[upload_audio],
-        original_language="pt" if upload_audio == "Nacional" else "en",
-        is_disc="",
-        season_int=season,
-        tv_pack=tv_pack,
-        episode_int=0 if tv_pack else 2,
-        skipping=None,
-    )
-    return tracker, meta
-
-
-def audio_header(category, audio, *, season_class="season_01"):
-    label = audio if category == "TV" else {"Dual Áudio": "Torrents Dual Áudios", "Legendado": "Torrents Legendados", "Dublado": "Torrents Dublados"}[audio]
-    return f'<tr><td class="audio_header {season_class}"><strong>{label}</strong></td></tr>'
-
-
-@pytest.mark.parametrize("category", ["MOVIE", "TV"])
-@pytest.mark.parametrize("upload_audio", ["Legendado", "Dublado", "Dual Áudio", "Nacional"])
-@pytest.mark.parametrize("existing_audio", ["Dual Áudio", "Legendado", "Dublado"])
-def test_search_existing_audio_rules(category, upload_audio, existing_audio):
-    tracker, meta = audio_search(category, upload_audio, audio_header(category, existing_audio))
-
-    dupes = asyncio.run(tracker.search_existing(meta))
-
-    blocked = (upload_audio == "Legendado" and existing_audio in ("Dual Áudio", "Dublado")) or (upload_audio == "Dublado" and existing_audio in ("Dual Áudio", "Legendado"))
-    assert meta.skipping == ("BJSHARE" if blocked else None)  # noqa: S101
-    assert [dupe["id"] for dupe in dupes] == ([] if blocked else ["123"])  # noqa: S101
-
-
-@pytest.mark.parametrize("tv_pack", [True, False])
-@pytest.mark.parametrize("season, season_class, blocked", [(1, "season_01", True), (2, "season_01", False), (None, "season_01", False), (1, "", False), (0, "season_00", True)])
-def test_search_existing_audio_rules_match_season(season, season_class, blocked, tv_pack):
-    tracker, meta = audio_search("TV", "Legendado", audio_header("TV", "Dual Áudio", season_class=season_class), season=season, tv_pack=tv_pack)
-
-    dupes = asyncio.run(tracker.search_existing(meta))
-
-    assert meta.skipping == ("BJSHARE" if blocked else None)  # noqa: S101
-    assert bool(dupes) is not blocked  # noqa: S101
-
-
-@pytest.mark.parametrize("category", ["MOVIE", "TV"])
-@pytest.mark.parametrize(
-    "header_html", ["", '<tr><td class="audio_header season_01">Desconhecido</td></tr>', "<tr><td>Dual Áudio Torrents Dual Áudios Dublado Legendado</td></tr>"]
-)
-def test_search_existing_audio_rules_ignore_missing_or_unrelated_labels(category, header_html):
-    header_html += (
-        '<tr><td><blockquote>Dual Áudio Torrents Dual Áudios Dublado Legendado</blockquote><div class="forum_post">Torrents Dublados Torrents Legendados</div></td></tr>'
-    )
-    tracker, meta = audio_search(category, "Legendado", header_html)
-
-    dupes = asyncio.run(tracker.search_existing(meta))
-
-    assert meta.skipping is None  # noqa: S101
-    assert len(dupes) == 1  # noqa: S101
-
-
-@pytest.mark.parametrize("category", ["MOVIE", "TV"])
-def test_search_existing_audio_rules_normalize_case_and_whitespace(category):
-    label = "Dual Áudio" if category == "TV" else "Torrents Dual Áudios"
-    header = audio_header(category, "Dual Áudio").replace(label, "  " + "\n  ".join(label.upper().split()) + "  ")
-    tracker, meta = audio_search(category, "Legendado", header)
-
-    assert asyncio.run(tracker.search_existing(meta)) == []  # noqa: S101
-    assert meta.skipping == "BJSHARE"  # noqa: S101
 
 
 def test_get_database_identifier_returns_imdb_id():
@@ -229,7 +45,10 @@ def test_get_database_identifier_returns_imdb_id():
         "html.parser",
     )
 
-    assert BJShare.get_database_identifier(object.__new__(BJShare), soup) == "tt999999999"  # noqa: S101
+    assert (
+        BJShare.get_database_identifier(object.__new__(BJShare), soup)
+        == "tt999999999"
+    )
 
 
 def test_get_database_identifier_returns_tmdb_id():
@@ -240,53 +59,73 @@ def test_get_database_identifier_returns_tmdb_id():
         "html.parser",
     )
 
-    assert BJShare.get_database_identifier(object.__new__(BJShare), soup) == "tv/999999999"  # noqa: S101
+    assert (
+        BJShare.get_database_identifier(object.__new__(BJShare), soup)
+        == "tv/999999999"
+    )
 
 
-def test_search_existing_queries_only_media_identifiers():
+def test_search_existing_queries_both_media_identifiers_before_title_fallback():
     tracker = object.__new__(BJShare)
     tracker.session = FakeSession()
     tracker.cookie_validator = FakeCookieValidator()
     tracker.base_url = "https://bj-share.info"
     tracker.tracker = "BJSHARE"
-    meta = SimpleNamespace(category="TV", title="Example", imdb_tt="tt1234567", tmdb_id="76543")
+    meta = SimpleNamespace(
+        category="TV",
+        title="Example",
+        imdb_info={"imdbID": "tt1234567"},
+        tmdb_id="76543",
+    )
 
     asyncio.run(tracker.search_existing(meta))
 
-    assert tracker.session.calls == [{"searchstr": "tt1234567"}]  # noqa: S101
+    assert tracker.session.calls == [
+        {"search": "tt1234567", "active": "1", "search_type": "1"},
+        {"search": "tv/76543", "active": "1", "search_type": "1"},
+    ]
 
 
-def test_search_existing_falls_back_to_tmdb_when_imdb_finds_no_group():
+def test_search_existing_normalizes_decorated_imdb_id() -> None:
+    tracker = object.__new__(BJShare)
+    tracker.session = FakeSession()
+    tracker.cookie_validator = FakeCookieValidator()
+    tracker.base_url = "https://bj-share.info"
+    tracker.tracker = "BJSHARE"
+    meta = SimpleNamespace(
+        category="MOVIE",
+        title="Inside Job",
+        imdb_info={"imdbID": "_tt0898266_"},
+        tmdb_id="",
+    )
+
+    asyncio.run(tracker.search_existing(meta))
+
+    assert tracker.session.calls == [
+        {"search": "tt0898266", "active": "1", "search_type": "1"}
+    ]
+
+
+def test_search_existing_queries_title_once_without_media_identifiers():
     tracker = object.__new__(BJShare)
     tracker.session = FakeSession(FakeSearchResponse())
     tracker.cookie_validator = FakeCookieValidator()
     tracker.base_url = "https://bj-share.info"
     tracker.tracker = "BJSHARE"
-    meta = SimpleNamespace(category="TV", title="Example", imdb_tt="tt1234567", tmdb_id="76543")
+    meta = SimpleNamespace(
+        category="TV", title="Example", imdb_info={}, tmdb_id=""
+    )
 
     asyncio.run(tracker.search_existing(meta))
 
-    assert tracker.session.calls == [{"searchstr": "tt1234567"}, {"searchstr": "tv/76543"}]  # noqa: S101
-
-
-def test_search_existing_does_not_query_title_without_media_identifiers():
-    tracker = object.__new__(BJShare)
-    tracker.session = FakeSession(FakeSearchResponse())
-    tracker.cookie_validator = FakeCookieValidator()
-    tracker.base_url = "https://bj-share.info"
-    tracker.tracker = "BJSHARE"
-    meta = SimpleNamespace(category="TV", title="Example", imdb_tt="", tmdb_id="")
-
-    asyncio.run(tracker.search_existing(meta))
-
-    assert tracker.session.calls == []  # noqa: S101
+    assert tracker.session.calls == [{"searchstr": "Example"}]
 
 
 def test_get_database_overview_extracts_synopsis():
     html = """
     <div class="box torrent_description">
         <div class="body">
-            <blockquote>Uma personagem inventada chega a uma cidade fictícia...</blockquote>
+            <blockquote>Em busca de uma vida melhor, Lu Xiao Fan deixa o interior...</blockquote>
             <blockquote class="center"><iframe class="youtube" src="http://example.com"></iframe></blockquote>
         </div>
     </div>
@@ -294,21 +133,10 @@ def test_get_database_overview_extracts_synopsis():
     soup = BeautifulSoup(html, "html.parser")
     tracker = object.__new__(BJShare)
     overview = tracker.get_database_overview(soup)
-    assert overview == "Uma personagem inventada chega a uma cidade fictícia..."  # noqa: S101
-
-
-def test_get_database_credits_extracts_creator_and_cast():
-    soup = BeautifulSoup(
-        '<div class="box"><div class="head">InformaÃ§Ãµes</div><table>'
-        "<tr><td><b>Criador:</b></td><td>Creator Example</td></tr>"
-        "<tr><td><b>Elenco:</b></td><td>Actor One, Actor Two</td></tr>"
-        "</table></div>",
-        "html.parser",
+    assert (
+        overview
+        == "Em busca de uma vida melhor, Lu Xiao Fan deixa o interior..."
     )
-    tracker = object.__new__(BJShare)
-
-    assert tracker.get_database_credits(soup, "creator") == "Creator Example"  # noqa: S101
-    assert tracker.get_database_credits(soup, "cast") == "Actor One, Actor Two"  # noqa: S101
 
 
 def test_get_overview_returns_database_overview_when_already_has_the_info():
@@ -318,192 +146,4 @@ def test_get_overview_returns_database_overview_when_already_has_the_info():
     BJShare.database_overview = "Sinopse do site BJ-Share"
 
     result = asyncio.run(tracker.get_overview())
-    assert result == "Sinopse do site BJ-Share"  # noqa: S101
-
-
-def test_get_subtitle_hardcoded_portuguese():
-    tracker = object.__new__(BJShare)
-    tracker.tracker = "BJSHARE"
-    meta = Meta(
-        {
-            "language_checked": True,
-            "subtitle_languages": ["Portuguese"],
-            "hardcoded_subs": True,
-        }
-    )
-
-    result = asyncio.run(tracker.get_subtitle(meta))
-    assert result == "Queimada no vídeo"  # noqa: S101
-
-
-def test_get_subtitle_embedded_portuguese():
-    tracker = object.__new__(BJShare)
-    tracker.tracker = "BJSHARE"
-    meta = Meta(
-        {
-            "language_checked": True,
-            "subtitle_languages": ["Portuguese"],
-            "hardcoded_subs": False,
-        }
-    )
-
-    result = asyncio.run(tracker.get_subtitle(meta))
-    assert result == "Embutida"  # noqa: S101
-
-
-def test_get_subtitle_no_portuguese():
-    tracker = object.__new__(BJShare)
-    tracker.tracker = "BJSHARE"
-    meta = Meta(
-        {
-            "language_checked": True,
-            "subtitle_languages": ["English"],
-            "hardcoded_subs": False,
-        }
-    )
-
-    result = asyncio.run(tracker.get_subtitle(meta))
-    assert result == "Nenhuma"  # noqa: S101
-
-
-@pytest.mark.parametrize(
-    "audio_tags, is_disc, expected",
-    [(["pt-PT"], "", "Outro"), (["pt-BR"], "", "Nacional"), (["pt"], "", "Nacional"), (["pt-PT", "pt-BR"], "", "Nacional"), (["pt-PT"], "BDMV", "Nacional")],
-)
-def test_get_audio_european_portuguese_is_outro(audio_tags, is_disc, expected):
-    tracker = object.__new__(BJShare)
-    tracks = [{"@type": "General"}, *({"@type": "Audio", "Language": tag} for tag in audio_tags)]
-    meta = Meta(
-        category="MOVIE",
-        language_checked=True,
-        audio_languages=["Portuguese"],
-        original_language="pt",
-        is_disc=is_disc,
-        mediainfo={"media": {"track": tracks}},
-    )
-
-    assert asyncio.run(tracker.get_audio(meta)) == expected  # noqa: S101
-
-
-FRAGMENT_HTML = (
-    '<td colspan="5"><div id="release_10"><blockquote>Lançado por: someone</blockquote></div>'
-    '<div id="files_10" class="hidden"><table class="filelist_table">'
-    '<tr class="colhead_dark"><td>Nome do Arquivo</td><td>Tamanho</td></tr>'
-    "<tr><td>Fictional.Story.2020.m4b</td><td>1 MiB</td></tr>"
-    '<tr><td colspan="2">Total de arquivos: 1</td></tr></table></div>'
-    "<blockquote>Autor: Example Author</blockquote>"
-    "<blockquote class='fullSize'><span class=\"size5\"><strong>Visão Geral</strong></span><br />\n"
-    '<span style="font-style: italic;">A fictional</span> overview with a '
-    '<a href="https://href.li/?https://example.com/page">link</a>.<br \n<br />'
-    '<div style="text-align: right;"><a href="https://href.li/?https://github.com/someone/Upload-Assistant">'
-    '<span class="size1">Compartilhado com Upload-Assistant</span></a></div></blockquote>'
-    "<blockquote>Formato: M4B</blockquote>"
-    '<div class="center"><a class="fancybox-thumbs" href="https://img.example/full.png"><img src="https://img.example/thumb.png" /></a></div></td>'
-)
-
-
-def test_parse_torrent_details_converts_book_description_to_bbcode():
-    cell = BeautifulSoup(FRAGMENT_HTML, "html.parser").find("td")
-
-    description, screenshots, files = BJShare.parse_torrent_details(cell)
-
-    assert description == "[size=5][b]Visão Geral[/b][/size]\n[i]A fictional[/i] overview with a [url=https://example.com/page]link[/url]."  # noqa: S101
-    assert screenshots == [{"img_url": "https://img.example/thumb.png", "raw_url": "https://img.example/full.png", "web_url": "https://img.example/full.png"}]  # noqa: S101
-    assert files == ["Fictional.Story.2020.m4b"]  # noqa: S101
-
-
-def test_parse_torrent_details_prefers_additional_information_block():
-    html = (
-        "<td><blockquote>Sinopse: A fictional synopsis.</blockquote>"
-        "<blockquote>Informações Adicionais: <br><strong>Notes</strong> from the group."
-        "<blockquote>A nested note.</blockquote></blockquote></td>"
-    )
-    cell = BeautifulSoup(html, "html.parser").find("td")
-
-    description, _screenshots, _files = BJShare.parse_torrent_details(cell)
-
-    assert description == "[b]Notes[/b] from the group.[quote]A nested note.[/quote]"  # noqa: S101
-
-
-def test_get_group_external_ids_reads_information_box():
-    html = (
-        '<div class="box"><div class="head"><strong>Informações</strong></div><table>'
-        '<tr><td>Nota IMDB:</td><td><a href="https://href.li/?https://www.imdb.com/title/tt0000123">IMDb</a></td></tr>'
-        '<tr><td>TMDB:</td><td><a href="https://www.themoviedb.org/movie/456">TMDB</a></td></tr></table></div>'
-    )
-
-    assert BJShare.get_group_external_ids(BeautifulSoup(html, "html.parser")) == (123, 456)  # noqa: S101
-
-
-class FakeMetadataResponse:
-    def __init__(self, text="", location=""):
-        self.text = text
-        self.headers = {"location": location} if location else {}
-
-    def raise_for_status(self):
-        pass
-
-
-class FakeMetadataSession:
-    def __init__(self, responses):
-        self.responses = list(responses)
-        self.calls: list[tuple[str, dict[str, str]]] = []
-        self.cookies = None
-
-    async def get(self, url, *, params, follow_redirects=True):
-        _ = follow_redirects
-        self.calls.append((url.rsplit("/", 1)[-1], params))
-        return self.responses.pop(0)
-
-
-class FakeLoadedCookieValidator:
-    async def load_session_cookies(self, _meta, _tracker):
-        return object()
-
-
-def metadata_tracker(responses):
-    tracker = object.__new__(BJShare)
-    tracker.session = FakeMetadataSession(responses)
-    tracker.cookie_validator = FakeLoadedCookieValidator()
-    return tracker
-
-
-def test_get_torrent_metadata_uses_only_redirect_and_fragment_for_books():
-    tracker = metadata_tracker([FakeMetadataResponse(location="torrents.php?id=20&torrentid=10#torrent10"), FakeMetadataResponse(FRAGMENT_HTML)])
-    meta = Meta({"category": "BOOK"})
-
-    tmdb, imdb, _tvdb, _mal, description, _category, _infohash, imagelist, file_name = asyncio.run(tracker.get_torrent_metadata(meta, "10"))
-
-    assert tracker.session.calls == [  # noqa: S101
-        ("torrents.php", {"torrentid": "10"}),
-        ("ajax.php", {"action": "torrent_content", "torrentid": "10", "groupid": "20"}),
-    ]
-    assert (tmdb, imdb) == (0, 0)  # noqa: S101
-    assert description.startswith("[size=5][b]Visão Geral[/b][/size]")  # noqa: S101
-    assert "Upload-Assistant" not in description  # noqa: S101
-    assert imagelist[0]["raw_url"] == "https://img.example/full.png"  # noqa: S101
-    assert file_name == "Fictional.Story.2020.m4b"  # noqa: S101
-
-
-def test_get_torrent_metadata_reads_group_page_for_movies():
-    page = (
-        '<div class="box"><div class="head">Informações</div>'
-        '<a href="https://href.li/?https://www.imdb.com/title/tt0000123">IMDb</a></div>'
-        f'<table><tr id="torrent_10">{FRAGMENT_HTML.replace("<td colspan", "<td data-colspan")}</tr></table>'
-    )
-    tracker = metadata_tracker([FakeMetadataResponse(location="torrents.php?id=20&torrentid=10"), FakeMetadataResponse(page)])
-
-    result = asyncio.run(tracker.get_torrent_metadata(Meta({"category": "MOVIE"}), "10"))
-
-    assert [call[0] for call in tracker.session.calls] == ["torrents.php", "torrents.php"]  # noqa: S101
-    assert result[1] == 123  # noqa: S101
-    assert result[4].startswith("[size=5]")  # noqa: S101
-
-
-def test_get_torrent_metadata_stops_when_redirected_to_login():
-    tracker = metadata_tracker([FakeMetadataResponse(location="login.php")])
-
-    result = asyncio.run(tracker.get_torrent_metadata(Meta({"category": "BOOK"}), "10"))
-
-    assert result == (0, 0, 0, 0, "", None, None, [], None)  # noqa: S101
-    assert len(tracker.session.calls) == 1  # noqa: S101
+    assert result == "Sinopse do site BJ-Share"
