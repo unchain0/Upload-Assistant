@@ -82,10 +82,12 @@ def test_get_spectrogram_sources_only_uses_audio_files_for_audiobooks(
     ) == [chapter]
 
 
-def test_stft_parameters_bound_the_number_of_time_bins_for_long_audio():
-    sample_count = 600 * 48000
+def test_spectrogram_filter_keeps_stereo_channels_separate_without_resampling():
+    graph = build_spectrogram_filter(3, 2)
 
-    n_fft, hop_length = get_stft_parameters(sample_count)
+    assert graph.startswith("[0:3]showspectrumpic=")  # noqa: S101
+    assert "mode=separate" in graph  # noqa: S101
+    assert "aresample" not in graph  # noqa: S101
 
     assert n_fft == 2048
     assert sample_count / hop_length <= MAX_TIME_BINS

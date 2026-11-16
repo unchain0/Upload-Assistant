@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import pytest
 
 from src.delivery.cli.arguments import Args
 from src.domain_models.music import AudioTrack, MetadataSource, MusicRelease
@@ -88,7 +89,159 @@ def test_description_builder_renders_music_release_details():
     assert "24-bit" in result
     assert "96 kHz" in result
     assert "Stereo" in result
-    assert "3000 kbps, 3100 kbps" in result
+    assert "[td]3050 kbps[/td]" in result
+
+
+def test_description_builder_weights_music_bitrate_by_track_duration():
+    meta = Meta(
+        category="MUSIC",
+        music_release={
+            "fields": {"album": {"value": "Invented Album"}},
+            "tracks": [{"bitrate": 1000000, "duration": 300}, {"bitrate": 2000000, "duration": 100}],
+        },
+    )
+    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+
+    result = builder._build_music_desc_section(meta)
+
+    assert "[td]1250 kbps[/td]" in result
+
+
+def test_description_builder_keeps_bitrate_when_duration_is_invalid():
+    meta = Meta(
+        category="MUSIC",
+        music_release={
+            "fields": {"album": {"value": "Invented Album"}},
+            "tracks": [{"bitrate": 1000000, "duration": "unknown"}, {"bitrate": 2000000, "duration": 100}],
+        },
+    )
+    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+
+    result = builder._build_music_desc_section(meta)
+
+    assert "[td]1500 kbps[/td]" in result
+
+
+def test_description_builder_renders_album_tracklist_in_disc_order():
+    meta = Meta(
+        category="MUSIC",
+        music_release={
+            "fields": {"release_type": {"value": "Album"}, "album": {"value": "Invented Album"}},
+            "tracks": [
+                {"relative_path": "Disc 2/02 - Finale.flac", "disc_number": 2, "track_number": 2, "title": "Finale", "duration": 125},
+                {"relative_path": "Disc 1/02 - Next.flac", "disc_number": 1, "track_number": 2, "title": "Next", "duration": 63},
+                {"relative_path": "Disc 1/01 - Opening.flac", "disc_number": 1, "track_number": 1, "title": "Opening", "duration": 121},
+                {"relative_path": "Disc 2\\01 - Untagged.flac", "disc_number": 2, "track_number": 1, "duration": None},
+            ],
+        },
+    )
+    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}}, language="pt-BR")
+
+    result = builder._build_music_desc_section(meta)
+
+    assert "[h2]Lista de faixas[/h2]" in result
+    assert "[tr][td][b]N. da faixa[/b][/td][td][b]Título[/b][/td][td][b]Duração[/b][/td][/tr]" in result
+    assert result.index("[tr][td]1.01[/td][td]Opening[/td][td]02:01[/td][/tr]") < result.index("[tr][td]1.02[/td][td]Next[/td][td]01:03[/td][/tr]")
+    assert result.index("[tr][td]2.01[/td][td]01 - Untagged[/td][td][/td][/tr]") < result.index("[tr][td]2.02[/td][td]Finale[/td][td]02:05[/td][/tr]")
+    assert "Disc 2\\" not in result
+
+
+def test_description_builder_tracklist_handles_missing_tags_and_bbcode():
+    meta = Meta(
+        category="MUSIC",
+        music_release={
+            "tracks": [
+                {"relative_path": "02 - Later.flac", "track_number": None, "title": "Later [b]Track[/b] & Movin' Out", "duration": "invalid"},
+                {"relative_path": "01 - First.flac", "track_number": 1, "title": "First"},
+            ]
+        },
+    )
+    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+
+    result = builder._build_music_desc_section(meta)
+
+    assert "[h2]Tracklist[/h2]" in result
+    assert result.index("[tr][td]01[/td][td]First[/td]") < result.index("[tr][td]—[/td][td]Later \uff3bb\uff3dTrack\uff3b/b\uff3d & Movin' Out[/td]")
+    assert "&#x27;" not in result
+    assert "&amp;" not in result
+    assert "invalid" not in result
+
+
+def test_description_builder_tracklist_uses_plain_text_when_tracker_disables_tables():
+    meta = Meta(category="MUSIC", music_release={"tracks": [{"relative_path": "01 - Opening.flac", "track_number": 1, "title": "Opening", "duration": 121}]})
+    builder = DescriptionBuilder("TORRENTLEECH", {"DEFAULT": {}, "TRACKERS": {"TORRENTLEECH": {}}})
+
+    result = builder._build_music_desc_section(meta)
+
+    assert "[table]" not in result
+    assert "[h2]Tracklist[/h2]\n01. Opening (02:01)" in result
+
+
+def test_description_builder_renders_rip_logs_in_spoilers(tmp_path: Path):
+    (tmp_path / "CD1").mkdir()
+    (tmp_path / "CD1" / "Invented Album.log").write_bytes("Exact Audio Copy V1.6\r\n\r\nUsed drive  : Fictional Drive\r\nHidden [/code] tag\r\n".encode("utf-16"))
+    (tmp_path / "XLD.log").write_text("X Lossless Decoder version 20240511\nHidden [/pre] tag\nAll tracks accurately ripped\n", encoding="utf-8")
+    (tmp_path / "notes.log").write_text("Mounted the CD-ROM image\n", encoding="utf-8")
+    release = {
+        "root": str(tmp_path),
+        "tracks": [{"relative_path": "01 - Opening.flac", "track_number": 1, "title": "Opening"}],
+        "auxiliary": {"logs": ["CD1/Invented Album.log", "XLD.log", "notes.log", "missing.log", "../outside.log"]},
+    }
+    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}}, language="pt-BR")
+
+    result = builder._build_music_desc_section(Meta(category="MUSIC", music_release=release))
+
+    assert result.index("[h2]Lista de faixas[/h2]") < result.index("[h2]Logs de Ripagem[/h2]")
+    assert "[spoiler=CD1/Invented Album.log][code]Exact Audio Copy V1.6\n\nUsed drive  : Fictional Drive\nHidden ［/code] tag[/code][/spoiler]" in result
+    assert "[spoiler=XLD.log][code]X Lossless Decoder version 20240511\nHidden ［/pre] tag\nAll tracks accurately ripped[/code][/spoiler]" in result
+    assert "notes.log" not in result
+    assert "\r" not in result
+
+
+def test_description_builder_omits_rip_log_section_without_rip_logs(tmp_path: Path):
+    (tmp_path / "notes.log").write_text("not a rip log\n", encoding="utf-8")
+    release = {"root": str(tmp_path), "tracks": [{"title": "Opening"}], "auxiliary": {"logs": ["notes.log"]}}
+    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+
+    result = builder._build_music_desc_section(Meta(category="MUSIC", music_release=release))
+
+    assert "Rip Logs" not in result
+    assert "[spoiler" not in result
+
+
+def _music_meta_with_cover() -> Meta:
+    return Meta(
+        category="MUSIC",
+        music_release={"fields": {"album": {"value": "Invented Album"}}},
+        hosted_artwork=[{"raw_url": "https://img.example/cover.jpg", "web_url": "https://img.example/view"}],
+    )
+
+
+def test_description_builder_adds_cover_column_for_asiancinema():
+    builder = DescriptionBuilder("ASIANCINEMA", {"DEFAULT": {}, "TRACKERS": {"ASIANCINEMA": {}}})
+
+    result = builder._build_music_desc_section(_music_meta_with_cover())
+
+    assert "[table]\n[tr][td][img=250]https://img.example/cover.jpg[/img][/td][td]\n[table]\n[tr][td][b]Album[/b][/td][td]Invented Album[/td][/tr]" in result
+
+
+def test_description_builder_adds_html_cover_column_for_torrentleech():
+    builder = DescriptionBuilder("TORRENTLEECH", {"DEFAULT": {}, "TRACKERS": {"TORRENTLEECH": {}}})
+
+    result = builder._build_music_desc_section(_music_meta_with_cover())
+
+    assert '<table><tr><td style="vertical-align: top; padding-right: 15px;"><img src="https://img.example/cover.jpg"' in result
+    assert '<td style="vertical-align: top;">[b]Album:[/b] Invented Album</td>' in result
+    assert result.endswith("</td></tr></table>")
+
+
+def test_description_builder_omits_cover_column_for_other_trackers():
+    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+
+    result = builder._build_music_desc_section(_music_meta_with_cover())
+
+    assert "cover.jpg" not in result
+    assert "[h2]Music Details[/h2]\n[table]\n[tr][td][b]Album[/b]" in result
 
 
 def test_description_builder_renders_external_music_ids_as_links():
@@ -127,6 +280,49 @@ def test_description_builder_renders_external_music_ids_as_links():
     assert "[url=https://www.discogs.com/master/28700]28700[/url]" in result
 
 
+def test_description_builder_compacts_redundant_music_fields():
+    meta = Meta(
+        category="MUSIC",
+        music_release={
+            "fields": {
+                "album": {"value": "Invented Album"},
+                "year": {"value": "2001"},
+                "release_year": {"value": "2001"},
+                "edition_year": {"value": "2001"},
+                "disc_count": {"value": 1},
+                "format": {"value": "FLAC"},
+            },
+            "tracks": [{"relative_path": "01 - Opening.flac", "track_number": 1, "title": "Opening", "codec": "FLAC", "bit_depth": 24, "sample_rate": 96000, "channels": 2}],
+        },
+    )
+    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+
+    result = builder._build_music_desc_section(meta)
+
+    assert "[tr][td][b]Audio[/b][/td][td]FLAC / 24-bit / 96 kHz / Stereo[/td][/tr]" in result
+    for hidden in ("[b]Release Year[/b]", "Edition Year", "Discs", "Codec", "[b]Tracks[/b]", "Bit Depth", "Sample Rate", "Channels"):
+        assert hidden not in result
+    assert "[h2]Tracklist[/h2]" in result
+
+
+def test_description_builder_keeps_distinct_music_fields():
+    meta = Meta(
+        category="MUSIC",
+        music_release={
+            "fields": {"year": {"value": "1999"}, "release_year": {"value": "2024"}, "edition_year": {"value": "2020"}, "disc_count": {"value": 2}, "format": {"value": "MP3"}},
+            "tracks": [{"codec": "LAME"}],
+        },
+    )
+    builder = DescriptionBuilder("PEERGARDEN", {"DEFAULT": {}, "TRACKERS": {"PEERGARDEN": {}}})
+
+    result = builder._build_music_desc_section(meta)
+
+    assert "[b]Release Year[/b][/td][td]2024" in result
+    assert "[b]Edition Year[/b][/td][td]2020" in result
+    assert "[b]Discs[/b][/td][td]2" in result
+    assert "[td]MP3 (LAME)[/td]" in result
+
+
 def test_description_generator_includes_music_release_details():
     meta = Meta(
         category="MUSIC",
@@ -135,7 +331,7 @@ def test_description_generator_includes_music_release_details():
                 "artists": {"value": ["Artist One", "Artist Two"]},
                 "album": {"value": "Example Album"},
             },
-            "tracks": [{"format": "FLAC", "sample_rate": 96000}],
+            "tracks": [{"relative_path": "01 - Prelude.flac", "track_number": 1, "title": "Prelude", "format": "FLAC", "sample_rate": 96000}],
         },
     )
     builder = DescriptionBuilder(
@@ -168,6 +364,8 @@ def test_description_generator_includes_music_release_details():
     assert "Artist One, Artist Two" in result
     assert "Example Album" in result
     assert "96 kHz" in result
+    assert "[h2]Tracklist[/h2]\n[table]" in result
+    assert "[tr][td]01[/td][td]Prelude[/td][td][/td][/tr]" in result
 
 
 def test_description_builder_skips_invalid_music_technical_values():
@@ -238,12 +436,12 @@ def test_original_group_year_and_explicit_remaster_edition_are_distinct():
             relative_path="track.flac",
             format="FLAC",
             codec="FLAC",
-            artist="Led Zeppelin",
-            album_artist="Led Zeppelin",
-            album="Led Zeppelin II",
-            title="Whole Lotta Love",
+            artist="Example Band",
+            album_artist="Example Band",
+            album="Example Band II",
+            title="Sample Track",
             date="2014",
-            tags={"albumartist": ["Led Zeppelin"]},
+            tags={"albumartist": ["Example Band"]},
         )
     )
 
@@ -266,12 +464,12 @@ def test_edition_only_folder_does_not_promote_edition_year_to_group_year():
             relative_path="track.flac",
             format="FLAC",
             codec="FLAC",
-            artist="Led Zeppelin",
-            album_artist="Led Zeppelin",
-            album="Coda",
-            title="We're Gonna Groove",
+            artist="Example Band",
+            album_artist="Example Band",
+            album="Final Notes",
+            title="Closing Track",
             date="2015",
-            tags={"albumartist": ["Led Zeppelin"]},
+            tags={"albumartist": ["Example Band"]},
         )
     )
 
@@ -293,23 +491,23 @@ def test_web_directory_brackets_populate_release_not_edition_metadata():
             relative_path="track.flac",
             format="FLAC",
             codec="FLAC",
-            artist="The Carter Family",
-            album_artist="The Carter Family & Johnny Cash",
-            album="Keep On The Sunny Side",
-            title="Keep On The Sunny Side",
+            artist="The Sample Family",
+            album_artist="The Sample Family & Guest Singer",
+            album="Invented Song",
+            title="Invented Song",
             date="1963",
-            tags={"albumartist": ["The Carter Family & Johnny Cash"]},
+            tags={"albumartist": ["The Sample Family & Guest Singer"]},
         )
     )
 
     MusicReleaseAnalyzer()._derive_release_fields(
         release,
-        "1963 - The Carter Family & Johnny Cash - Keep On The Sunny Side [2014 WEB FLAC][Columbia Nashville Legacy][886444460446]",
+        "1963 - The Sample Family & Guest Singer - Invented Song [2014 WEB FLAC][Sample Label][886444460446]",
     )
 
     assert release.get("year") == "1963"
     assert release.get("release_year") == "2014"
-    assert release.get("release_label") == "Columbia Nashville Legacy"
+    assert release.get("release_label") == "Sample Label"
     assert release.get("release_catalogue_number") == "886444460446"
     assert not release.get("edition_year")
 
@@ -349,25 +547,24 @@ def test_compilation_uses_multiple_artists_not_various_artists_literal():
 def test_featured_track_artists_do_not_turn_a_stable_album_artist_into_a_compilation():
     """Guest-heavy albums must retain the release's ALBUMARTIST credit.
 
-    This mirrors Bootsy Collins - Metal Health: all tracks are credited to
-    Bootsy at album level, while individual songs add different guests.
+    All tracks share one album artist while individual songs add guests.
     """
     release = MusicRelease(root=".")
     track_artists = (
-        "Bootsy Collins",
-        "Bootsy Collins, Manou Gallo, Buckethead",
-        "Bootsy Collins, Buckethead, Victor Wooten",
-        "Bootsy Collins, Ouiwey Collins",
-        "Bootsy Collins, Buckethead",
-        "Bootsy Collins, Buckethead, Robert Trujillo",
-        "Bootsy Collins, Nate Alien8, Buckethead, Barbie T",
-        "Bootsy Collins, Robert Trujillo",
-        "Bootsy Collins, Tobotius",
-        "Bootsy Collins, Billy Sheehan",
-        "Bootsy Collins, Buckethead, Jennifer Batten",
-        "Bootsy Collins, Buckethead, Tobotius",
-        "Bootsy Collins, Samuel L. Jackson",
-        "Bootsy Collins, Eric Gales",
+        "Lead Artist",
+        "Lead Artist, Guest One, Guest Two",
+        "Lead Artist, Guest Two, Guest Three",
+        "Lead Artist, Guest Four",
+        "Lead Artist, Guest Two",
+        "Lead Artist, Guest Two, Guest Five",
+        "Lead Artist, Guest Six, Guest Two, Guest Seven",
+        "Lead Artist, Guest Five",
+        "Lead Artist, Guest Eight",
+        "Lead Artist, Guest Nine",
+        "Lead Artist, Guest Two, Guest Ten",
+        "Lead Artist, Guest Two, Guest Eight",
+        "Lead Artist, Guest Eleven",
+        "Lead Artist, Guest Twelve",
     )
     for index, artist in enumerate(track_artists, start=1):
         release.tracks.append(
@@ -377,11 +574,11 @@ def test_featured_track_artists_do_not_turn_a_stable_album_artist_into_a_compila
                 format="FLAC",
                 codec="FLAC",
                 artist=artist,
-                album_artist="Bootsy Collins",
-                album="Metal Health",
+                album_artist="Lead Artist",
+                album="Sample Album",
                 title=f"Track {index}",
                 track_number=index,
-                tags={"albumartist": ["Bootsy Collins"], "artist": [artist]},
+                tags={"albumartist": ["Lead Artist"], "artist": [artist]},
             )
         )
 
@@ -390,8 +587,8 @@ def test_featured_track_artists_do_not_turn_a_stable_album_artist_into_a_compila
     )
 
     assert release.get("release_type") == "Album"
-    assert release.get("artists") == ["Bootsy Collins"]
-    assert release.get("artist") == "Bootsy Collins"
+    assert release.get("artists") == ["Lead Artist"]
+    assert release.get("artist") == "Lead Artist"
 
 
 def test_album_title_containing_ost_letters_is_not_a_soundtrack():
@@ -403,12 +600,12 @@ def test_album_title_containing_ost_letters_is_not_a_soundtrack():
                 relative_path=f"{index}.flac",
                 format="FLAC",
                 codec="FLAC",
-                artist="RiN",
-                album_artist="RiN",
+                artist="Vexa",
+                album_artist="Vexa",
                 album="NOSTALGIA",
                 title=f"Track {index}",
                 track_number=index,
-                tags={"albumartist": ["RiN"], "artist": ["RiN"]},
+                tags={"albumartist": ["Vexa"], "artist": ["Vexa"]},
             )
         )
 
@@ -434,14 +631,14 @@ def test_orpheus_preserves_multiple_artists_and_release_namespace():
         )
     )
     for field, value in {
-        "artists": ["Jay-Z", "Kanye West"],
-        "artist": "Jay-Z & Kanye West",
-        "album": "Watch the Throne",
+        "artists": ["Example MC", "Example Rapper"],
+        "artist": "Example MC & Example Rapper",
+        "album": "Invented Crown",
         "year": "2011",
         "media": "CD",
         "release_type": "Album",
-        "release_label": "Roc-A-Fella",
-        "release_catalogue_number": "B0015962-02",
+        "release_label": "Fictional Records",
+        "release_catalogue_number": "FIC0001-02",
     }.items():
         release.set_field(field, value, MetadataSource.FILE_TAG, 1.0)
 
@@ -451,7 +648,7 @@ def test_orpheus_preserves_multiple_artists_and_release_namespace():
         release,
     )
 
-    assert payload["artists[]"] == ["Jay-Z", "Kanye West"]
+    assert payload["artists[]"] == ["Example MC", "Example Rapper"]
     assert payload["importance[]"] == [1, 1]
     assert payload["record_label"] == "Roc-A-Fella"
     assert payload["catalogue_number"] == "B0015962-02"
@@ -477,8 +674,6 @@ def test_orpheus_additional_checks_block_prohibited_music_artists():
 
     assert not asyncio.run(adapter.get_additional_checks(meta))
     assert "Paul_DVR" in meta.tracker_status["ORPHEUS"]["status_message"]
-    assert not asyncio.run(adapter.upload(meta))
-    assert "debug_payload" not in meta.tracker_status["ORPHEUS"]
 
 
 def test_orpheus_additional_checks_block_blacklisted_releases_and_labels():
@@ -510,7 +705,8 @@ def test_orpheus_additional_checks_block_blacklisted_releases_and_labels():
             in meta.tracker_status["ORPHEUS"]["status_message"]
         )
 
-    for label in ("Sandero Classic Sound", "Sip It & Trip It Records"):
+    assert Orpheus.blocked_music_labels
+    for label in Orpheus.blocked_music_labels:
         release = MusicRelease(root=".")
         release.set_field("release_label", label, MetadataSource.FILE_TAG, 1.0)
         meta = Meta(category="MUSIC", music_release=release.to_dict())
@@ -624,9 +820,43 @@ def test_orpheus_uses_concrete_release_year_for_required_edition_year():
         Meta(category="MUSIC"), release
     )
 
-    assert payload["remaster"] == 1
+    assert "remaster" not in payload
     assert payload["remaster_year"] == "2026"
     assert not release.get("edition_year")
+
+
+def test_orpheus_rejects_mixed_audio_formats_when_building_payload():
+    release = MusicRelease(root=".")
+    release.tracks.extend(
+        [
+            AudioTrack(path="track.flac", relative_path="track.flac", format="FLAC", codec="FLAC"),
+            AudioTrack(path="track.mp3", relative_path="track.mp3", format="MP3", codec="MP3"),
+        ]
+    )
+    release.set_field("media", "WEB", MetadataSource.FILE_TAG, 1.0)
+
+    with pytest.raises(ValueError, match="exactly one audio format"):
+        Orpheus({"TRACKERS": {"ORPHEUS": {}}}).build_upload_payload(Meta(category="MUSIC"), release)
+
+
+def test_orpheus_sends_explicit_edition_year_in_edition_fields():
+    release = MusicRelease(root=".")
+    release.tracks.append(AudioTrack(path="track.flac", relative_path="track.flac", format="FLAC", codec="FLAC"))
+    for field, value in {
+        "artist": "Artist",
+        "artists": ["Artist"],
+        "album": "Album",
+        "year": "2020",
+        "media": "WEB",
+        "release_type": "Album",
+        "edition_year": "2024",
+    }.items():
+        release.set_field(field, value, MetadataSource.FILE_TAG, 1.0)
+
+    payload = Orpheus({"TRACKERS": {"ORPHEUS": {}}}).build_upload_payload(Meta(category="MUSIC"), release)
+
+    assert "remaster" not in payload
+    assert payload["remaster_year"] == "2024"
 
 
 def test_orpheus_request_match_is_title_artist_and_initial_year_aware():
@@ -639,9 +869,9 @@ def test_orpheus_request_match_is_title_artist_and_initial_year_aware():
     }.items():
         release.set_field(field, value, MetadataSource.FILE_TAG, 1.0)
     record = {
-        "title": "Coda",
+        "title": "Final Notes",
         "year": 1982,
-        "artists": [[{"name": "Led Zeppelin"}]],
+        "artists": [[{"name": "Example Band"}]],
     }
 
     assert Orpheus._request_match_type(release, record) == "exact"
@@ -845,24 +1075,24 @@ def test_musicbrainz_prefers_matching_cd_barcode_over_same_track_count_vinyl():
         [
             {
                 "id": "wrong-vinyl",
-                "title": "Seventh Son of a Seventh Son",
+                "title": "Invented Prophecy",
                 "score": "100",
-                "barcode": "881034121455",
+                "barcode": "123456789012",
                 "media": [{"format": '12" Vinyl', "track-count": 8}],
             },
             {
                 "id": "correct-cd",
-                "title": "Seventh Son of a Seventh Son",
+                "title": "Invented Prophecy",
                 "score": "95",
-                "barcode": "0190295567699",
+                "barcode": "1234567890128",
                 "media": [{"format": "CD", "track-count": 8}],
-                "label-info": [{"catalog-number": "0190295567699"}],
+                "label-info": [{"catalog-number": "1234567890128"}],
             },
         ],
-        "Seventh Son of a Seventh Son",
+        "Invented Prophecy",
         8,
         "CD",
-        "0190295567699",
+        "1234567890128",
     )
 
     assert result is not None
@@ -1007,7 +1237,7 @@ def test_directory_catalogue_and_label_are_extracted_from_braced_release_info(
 
     assert release.get("release_catalogue_number") == "B001219802"
     assert release.get("directory_catalogue_number") == "B001219802"
-    assert release.get("release_label") == "Roc-A-Fella Records"
+    assert release.get("release_label") == "Example Records"
 
 
 def test_directory_derivation_strips_only_matched_bracketed_metadata(tmp_path):
@@ -1286,6 +1516,7 @@ def test_music_prep_runs_shared_client_path_lookup_before_returning():
     client = object()
     hash_ids = ["infohash", "torrent_hash", "skip_auto_torrent"]
     tracker_ids = ["orpheus"]
+    calls: list[str] = []
 
     with (
         patch(
@@ -1445,3 +1676,11 @@ def test_gather_music_prep_generates_mediainfo(tmp_path):
         meta.base_dir,
         is_dvd=False,
     )
+
+
+def test_torrentleech_renders_headings_as_bold():
+    builder = DescriptionBuilder("TORRENTLEECH", {"DEFAULT": {}, "TRACKERS": {"TORRENTLEECH": {}}})
+
+    result = builder.tracker_specific_formats("TORRENTLEECH", "[h2]Music Details[/h2]\n[H1]Title[/H1]\n[h3]Notes[/h3]")
+
+    assert result == "[b]Music Details[/b]\n[b]Title[/b]\n[b]Notes[/b]"

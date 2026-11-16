@@ -45,8 +45,8 @@ def test_darkpeers_music_name_uses_required_folder_style():
         category="MUSIC",
         music_release={
             "fields": {
-                "artist": {"value": "Taylor Swift"},
-                "album": {"value": "Red"},
+                "artist": {"value": "Example Artist"},
+                "album": {"value": "Sample Album"},
                 "release_year": {"value": "2012"},
                 "media": {"value": "WEB"},
             },
@@ -56,7 +56,7 @@ def test_darkpeers_music_name_uses_required_folder_style():
         },
     )
 
-    assert _name(meta) == "Taylor Swift - Red (2012) - WEB FLAC 16-44.1"
+    assert _name(meta) == "Example Artist - Sample Album (2012) - WEB FLAC 16-44.1"
 
 
 def test_darkpeers_music_single_name_is_disambiguated():
@@ -101,6 +101,8 @@ def test_darkpeers_only_includes_audio_spectrograms_for_music():
             }
         },
     }
+    if hide_header is not None:
+        config["TRACKERS"]["DARKPEERS"]["hide_screenshot_header_if_only_section"] = hide_header
     adapter = DarkPeers(config)
     spectrogram = {
         "web_url": "https://example.com/page",
@@ -133,12 +135,12 @@ def test_darkpeers_only_includes_audio_spectrograms_for_music():
 def test_darkpeers_ebook_name_includes_book_elements():
     meta = Meta(
         category="BOOK",
-        author="Liu Cixin",
-        title="The Three-Body Problem",
+        author="Example Author",
+        title="Fictional Book",
         edition="Revised Edition",
         year=2008,
         type="EPUB",
-        isbn="978-0765377067",
+        isbn="978-0123456472",
         source="RETAIL",
     )
 
@@ -169,12 +171,12 @@ def test_darkpeers_audiobook_name_includes_format_bitrate_isbn_and_tag():
     meta = Meta(
         category="BOOK",
         audiobook=True,
-        author="Ernest Cline",
-        title="Ready Player One",
+        author="Sample Author",
+        title="Invented Audiobook",
         year=2011,
         type="MP3",
         audiobook_bitrate=64,
-        isbn="978-0-307-88743-6",
+        isbn="978-0-123-45647-2",
         tag="GROUP",
     )
 
@@ -1008,8 +1010,8 @@ def test_darkpeers_tv_year_rule_detects_a_distinct_exact_tmdb_title():
     response = Mock()
     response.json.return_value = {
         "results": [
-            {"id": 60735, "name": "The Flash", "original_name": "The Flash"},
-            {"id": 236, "name": "The Flash", "original_name": "The Flash"},
+            {"id": 60735, "name": "Example Series", "original_name": "Example Series"},
+            {"id": 236, "name": "Example Series", "original_name": "Example Series"},
         ]
     }
 
@@ -1599,6 +1601,21 @@ def test_darkpeers_confirmed_folder_check_continues_to_evo_validation():
     assert asyncio.run(adapter.get_additional_checks(meta)) is False
 
 
+def test_darkpeers_video_language_rule_accepts_tmdb_iso_original_language():
+    meta = Meta(
+        category="MOVIE",
+        unattended=True,
+        audio_languages=["Arabic"],
+        subtitle_languages=["English", "German"],
+        original_language="ar",
+        resolution="1080p",
+        screens=3,
+    )
+
+    assert _additional_checks(meta) is True
+    assert DarkPeers._normalise_language("nb") == "norwegian bokmal"
+
+
 def test_darkpeers_book_language_is_unrestricted_but_author_is_required_unattended():
     portuguese = Meta(
         category="BOOK",
@@ -1629,7 +1646,7 @@ def test_darkpeers_game_requires_scene_rars_nfo_and_instructions():
         category="GAME",
         unattended=True,
         scene=True,
-        scene_nfo_file="release.nfo",
+        scene_nfo_file=Path("release.nfo"),
         filelist=["release.r00", "release.rar"],
         description="Installation instructions: mount and install.",
     )

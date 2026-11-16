@@ -49,9 +49,11 @@ async def test_bdinfo_comparison_prompt_uses_rich_markup(
     question: str | None = None
 
     async def prompt_yes_no(value: str, *, default: bool = False) -> bool:
+        """Capture the question and preserve its existing affirmative default."""
         nonlocal question
         del default
         question = value
+        assert default is True
         return False
 
     monkeypatch.setattr(

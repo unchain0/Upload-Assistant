@@ -1,6 +1,8 @@
 """Regression coverage for release-marker detection in edition handling."""
 
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 

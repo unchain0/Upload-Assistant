@@ -1,6 +1,7 @@
 """Regression coverage for tracker-specific image-host reuploads."""
 
 import asyncio
+import json
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import AsyncMock

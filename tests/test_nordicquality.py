@@ -1,5 +1,4 @@
 import asyncio
-from unittest.mock import AsyncMock
 
 from src.domain_models.release import Meta
 from src.integrations.trackers.registry import TrackerSetup, tracker_class_map

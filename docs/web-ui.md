@@ -1,0 +1,525 @@
+# Upload Assistant — WebUI Guide
+
+The Upload Assistant WebUI provides a browser-based upload workspace, configuration editor, live execution monitor, and local administration tools. It uses the same Upload Assistant configuration and upload engine as the CLI.
+
+For a minimal first run, see the [WebUI Quick Start](web-ui-basic.md). Docker and Unraid users should also read [Docker WebUI setup](docker-gui.md).
+
+## Contents
+
+- [Starting the WebUI](#starting-the-webui)
+- [Account setup and sign-in](#account-setup-and-sign-in)
+- [Interface overview](#interface-overview)
+- [Upload workspace](#upload-workspace)
+- [Monitoring and reviewing a run](#monitoring-and-reviewing-a-run)
+- [Configuration workspace](#configuration-workspace)
+- [Security and administration](#security-and-administration)
+- [Statistics](#statistics)
+- [History](#history)
+- [Appearance, Help, and Changelog](#appearance-help-and-changelog)
+- [Mobile layout](#mobile-layout)
+- [Troubleshooting](#troubleshooting)
+
+## Starting the WebUI
+
+Start Upload Assistant with one or more directories followed by `--webui`:
+
+```bash
+python upload.py "/path/to/media" --webui 127.0.0.1:5000
+```
+
+Open <http://127.0.0.1:5000> in a browser. The address defaults to `127.0.0.1:5000`; include `HOST:PORT` only when overriding it.
+
+### Browse roots
+
+Browse roots define the parts of the filesystem visible in the File Browser. They do not grant access to unrelated directories.
+
+There are two ways to configure them:
+
+- **Command-line paths:** Paths supplied before `--webui` become browse roots when `UA_BROWSE_ROOTS` is unset.
+- **`UA_BROWSE_ROOTS`:** A comma-separated list of directories. This takes precedence over command-line paths.
+
+Example:
+
+```bash
+UA_BROWSE_ROOTS=/media/movies,/media/tv python upload.py --webui 127.0.0.1:5000
+```
+
+On Windows PowerShell:
+
+```powershell
+$env:UA_BROWSE_ROOTS = "D:\Movies,E:\TV Shows"
+python upload.py --webui 127.0.0.1:5000
+```
+
+Docker deployments normally start the WebUI without positional paths, so `UA_BROWSE_ROOTS` is required. Its values must be the container-side paths from the volume mappings. See [Docker WebUI setup](docker-gui.md).
+
+### Relevant environment variables
+
+| Variable                       | Purpose                                                                                                                                 |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `UA_BROWSE_ROOTS`              | Comma-separated directories exposed by the File Browser.                                                                                |
+| `UA_WEBUI_CORS_ORIGINS`        | Comma-separated origins allowed to call `/api/*` from a different origin. It is not needed for normal same-origin use; `*` is rejected. |
+| `UA_WEBUI_TRUSTED_PROXY_COUNT` | Number of trusted reverse-proxy hops. Leave unset or `0` for direct access; use `1` for one trusted proxy.                              |
+| `SESSION_SECRET`               | Stable session/encryption secret of at least 32 bytes.                                                                                  |
+| `SESSION_SECRET_FILE`          | Path to a readable file containing the stable session secret.                                                                           |
+
+Provide either `SESSION_SECRET` or `SESSION_SECRET_FILE`, not both. If neither is set, the application creates and persists a secret in its configuration directory. Container deployments must persist that directory or secret across recreations.
+
+## Account setup and sign-in
+
+The WebUI supports one local account.
+
+On the first visit:
+
+1. Copy the **setup code** that Upload Assistant prints in its console output (`docker logs` for containers), for example `WebUI first-run setup code: ABCD-EFGH-JKLM`.
+2. Enter the setup code, a username and a strong password.
+3. Choose **Create account**.
+4. Sign in with the new credentials if prompted.
+
+The setup code is shown only in the console, so a visitor who reaches an internet-exposed WebUI before you cannot claim the account. A new code is printed each time the WebUI starts without an account.
+
+The normal sign-in page provides:
+
+- **Remember me** for a longer-lived browser session;
+- a **2FA code** field when two-factor authentication is enabled;
+- **recovery login** for a saved one-time recovery code; and
+- password-reset guidance under **Forgot password?**.
+
+The sign-in and recovery pages use the color theme, light/dark mode, and corner style saved by the browser.
+
+## Interface overview
+
+The desktop interface has three main areas:
+
+1. **Application rail:** switches between Upload, Configuration, Stats, and History and opens Changelog, Help, Appearance, or Log out.
+2. **Workspace navigation:** File Browser on the Upload page or the settings navigation on the Configuration page.
+3. **Main workspace:** upload controls, execution output, configuration fields, or administration tools.
+
+The Arguments or live media sidebar occupies the right side of the Upload workspace. On desktop, the File Browser and right sidebar can be widened but cannot be resized below their designed minimum widths.
+
+## Upload workspace
+
+### Select files and folders
+
+The File Browser lists only content inside the configured browse roots. Use it to:
+
+- search the currently available files and folders;
+- sort by name, date, size, or a custom order;
+- select or deselect individual entries; and
+- select all currently listed entries.
+
+Normal browsing shows non-hidden files and folders inside the permitted roots so that video, disc, book, game, ISO, and other supported upload types remain available. The separate description-file picker is limited to `.txt`, `.nfo`, and `.md` files.
+
+Search normally includes every configured location. Enable **Search this folder** beside the search box to search recursively only beneath the folder most recently activated in the existing tree. Upload-selection checkboxes do not change this scope. The option defaults off and is not persisted. Collapse all clears the active search folder. While the option is on, changing mode or moving to another folder cancels pending results while keeping the query text; type again or press Enter to run a fresh search. Turning the option off also cancels pending results. Navigating the tree never clears an all-locations search. Enabling the option without a folder selected prompts you to select one, never scans all locations instead.
+
+Search results prioritize matching folders before filling the remaining places with files (100 by default), even when files are encountered in an earlier location. Once the results are full, search checks at most 500 more folders for matching folders and then stops, so a folder deep in a very large library can be left out in favor of files.
+
+Listings and searches omit dot-prefixed entries, Windows entries marked Hidden or System, and known system folders such as `$RECYCLE.BIN` and `System Volume Information`. Searches do not descend into those folders. Searches list symlinks and Windows junctions whose targets are inside the browse roots, as the tree does, but never descend into them. Searching inside a linked folder searches its target. These portable path checks do not protect against concurrent filesystem replacement; only configure trusted browse locations.
+
+You can also type or paste paths into **Upload paths** on desktop or mobile. Use server paths, one file or folder per line. Enter adds a line; use the execution button to start. One path runs individually, and multiple paths create a WebUI queue. Blank lines and duplicate paths are ignored, surrounding quotes are accepted, and each queue item can have its own arguments. The limit is 1,000 paths per upload.
+
+The server validates the complete selection before starting, and reports the invalid item (or original text line). Paths must exist inside the configured browse roots. Upload folders are inspected for escaping file links and reject directory links and Windows junctions. Local description, comparison, disc menu, poster and banner paths also use the permitted roots. Additional content paths belong in the path field, not in Additional Arguments.
+
+For text queues, paste their paths into **Upload paths** instead of selecting a `.txt` or `.log` queue file. Only temporary queues issued by the running WebUI are accepted outside the content roots; their contents are checked for modifications and their items are revalidated by the upload process. Ordinary CLI queue handling is unchanged. These checks constrain WebUI inputs; OS permissions remain the boundary against concurrent filesystem changes by other server processes or users.
+
+File browsing has no hourly or daily request quota. Folder listings and recursive searches use minute-based limits, while listing the configured roots is exempt. See [Request limits](#request-limits) for the allowances used throughout the WebUI.
+
+#### Custom root order
+
+Choose **Custom** in **Sort by**, then choose **Reorder**. Drag root folders into position or use the movement controls. The list previews its new position while dragging. Choose **Done** when finished; the ordering controls are hidden outside reorder mode. **Reset** clears the saved custom ordering.
+
+The custom order is stored in that browser and does not alter folders on disk.
+
+### Build the command
+
+The Upload workspace offers several ways to build the upload command:
+
+- type flags directly into **Additional Arguments**;
+- fill in options in the **Arguments** sidebar;
+- choose trackers in **Select Trackers (`-tk`)**; or
+- load a saved argument preset.
+
+To save a preset, enter a name and choose **Save**. Saving an existing name updates it. **Delete** removes the selected preset. Presets are shared through the WebUI data directory, while the selected file-browser order is browser-local.
+
+#### Arguments sidebar
+
+The category buttons at the top (**All**, **Movie**, **TV**, **Music**, **Book**, **Game**, **Other**) show the options that matter for that kind of upload, followed by the options that apply to every upload. Options shared by several categories appear in each of them. When the command contains `--category` (or `-c`), the matching category is selected automatically; you can still pick another one, and it stays selected until the category changes. Search looks through every option, whatever category is selected.
+
+Each option has its own control:
+
+- a checkbox for options without a value, such as `--debug`;
+- a list for options with fixed values, such as `--category`, `--type` or `--imghost`;
+- a text field for other values. Clearing the field keeps the bare option; choose **×** to remove it;
+- a folder button for options that take a server path, such as `--poster` or `--comparison`. It browses the same permitted roots as the File Browser.
+
+**In command** lists the options currently in the command, in order, so you can change or remove each one. Choose ☆ on any option to keep it under **Favorites**; favorites and the selected category are saved in this browser. Choose the expand icon in the sidebar header to open the panel in a larger view, with the command and its warnings below it.
+
+Every control edits only its own part of **Additional Arguments**, so the rest of what you typed is kept, and edits typed into the field show up in the controls. Values that need quoting are quoted the way the server reads them. Below the field, the WebUI warns about unknown options (with a suggestion), missing or invalid values, options set twice, options that cannot be combined (such as `--nohash` and `--rehash`), stray values and unclosed quotes. Warnings never block an upload; the server still validates the command. The [CLI arguments reference](cli-args.md) explains each available flag.
+
+Choose **Check now** under **Tracker status** to run a lightweight website-reachability check for the configured trackers. Its last-check age appears beside the button. The dot beside each tracker shows available, issue detected, unavailable, or not checked. An affected selected tracker also gets a compact warning with its check age and expandable details; on the Upload page it can be deselected directly from that warning. Results are cached for 15 minutes and reused between the Upload and Configuration pages. These checks do not use tracker credentials and cannot confirm that an account or upload endpoint is working, so warnings never prevent an upload.
+
+#### Tracker layout
+
+Keep favourites in the standard **Pinned** group, or create custom groups for the way you work. In the normal tracker selector, each heading shows how many trackers are selected and one button: **Select all** when none or some are selected, or **Deselect all** when every tracker shown in the group is selected. Deselecting one tracker changes the button back to **Select all**. The button updates only the trackers currently shown in that group, including **Pinned** and **Ungrouped**; selections in other groups stay as they are. This action is disabled during a run.
+
+Under **Layout & view**, choose **Edit layout** to show the pin and options buttons beside each tracker. Use a pin to move a tracker into **Pinned** at the top of the selector; unpinning restores its previous group. In edit mode, add named groups, rename headings, and drag trackers between groups or into a new order. The **⋯** options button sits between the tracker name and its pin. It opens **Move to…**, **Move earlier**, and **Move later** actions, keeping these controls hidden until needed. **Move to…** lists **Pinned**, custom groups, and **Ungrouped**, excluding the current group. **Move earlier** and **Move later** reorder within the current group and are disabled at its boundaries. All actions work with touch or a keyboard. **Back** returns from the group choices to the options; **Close** or **Escape** closes the panel. Focus returns to the options button after moving, reordering, or closing. Use the drag handle beside a group name to reorder groups; the name field supports normal text selection and editing. Choose **Done** to hide the editing controls and return to upload selection. **Show all supported trackers** is a toggle button. Its indicator is outlined when off and filled with a checkmark when on. When enabled, unconfigured trackers are also shown. Click it again to show only configured or selected trackers.
+
+Pins, groups and ordering save automatically in the current browser; other browsers and devices have separate layouts. Organising trackers does not select them for upload or change the upload order. Removing a group returns its trackers to **Ungrouped**. **Reset layout** clears the saved organisation after confirmation. Under **Tracker selection**, **Reset to Defaults** restores the configured default tracker selection, and **Clear All** deselects all trackers for the upload. Tracker controls follow the WebUI's selected colour theme, light or dark mode, and square or rounded corner style.
+
+### Start the upload
+
+After selecting content and reviewing the command:
+
+1. Confirm the intended tracker buttons are selected.
+2. Choose **Execute Upload**.
+3. Follow the streamed **Execution Output**.
+4. Answer prompts with the input controls shown at the bottom of the output panel.
+
+The WebUI runs the upload controller in an isolated subprocess so that **Kill** can stop its process tree and interactive input can be forwarded to it.
+
+### Upload tabs
+
+The tab bar above the workspace runs several uploads side by side; for example, an unattended queue in one tab while you prepare other uploads in another. Choose **+** to open a tab; you can prepare many uploads this way. Each tab has its own selection, arguments, output, and prompts. A tab's status dot shows whether it is idle, running, scheduled, waiting for another tab, waiting for your input, finished, or failed. Once metadata is found, the tab is named after the release: `Title (2024)` for films, `Title S01E02` or `Title S01` for series, `Artist – Album` for music, and `Author – Title` for books; queues add the current position, such as `[3/12]`. Until then it shows the file or folder name. Hover over a tab to see the full release name. Closing a running tab asks for confirmation and kills its process. When only one tab is open, its **×** resets it instead: the upload is killed (or a scheduled one cancelled) and the tab starts over empty.
+
+The same content cannot run in two tabs at once, and at most four uploads run at the same time. When all four slots are busy, **Execute Upload** becomes **Schedule Upload**: the upload is checked and queued on the server, and starts automatically, oldest first, as soon as a slot frees, even if no browser is open. A scheduled tab shows **Cancel** instead of **Kill**. Scheduling requires `webui_keep_uploads_on_disconnect`; with it disabled, the button is unavailable until a slot frees.
+
+Tabs you have prepared but not started are saved in the browser, so they come back after a reload together with the running, scheduled, and finished uploads from the server. They are saved per browser, not on the server.
+
+Heavy work is shared between tabs one at a time, so parallel tabs do not overload the machine or the Usenet provider: torrent hashing (mkbrr/torf), Usenet archive and PAR2 creation, Usenet posting, screenshot capture, and BDInfo scans. When two tabs need the same resource, the upload that started first goes first, and the other tab shows **Waiting** until the resource is free. The same limits apply to CLI runs started while the WebUI is busy.
+
+qBittorrent bandwidth control works the same way across tabs; see [Upload Order and qBittorrent Bandwidth Control](upload-order-and-bandwidth-control.md#multiple-concurrent-uploads).
+
+### Leaving the page
+
+Uploads keep running on the server when you close the browser tab, reload the page, or lose the connection (for example when a phone locks its screen). Open the WebUI again, from any browser signed in to it, and each running or recently finished upload reappears in its own tab. Missed output is replayed, and a pending prompt can still be answered. If the connection drops while the page stays open, the tab reconnects by itself.
+
+A finished upload stays available until you close its tab, clear it, or start another upload in it; finished uploads are also dropped after 24 hours or when their slot is needed for a new upload. Closing a running tab still kills its upload.
+
+An upload left waiting at a prompt with no browser connected is killed after `webui_unattended_prompt_timeout` minutes (60 by default), so it cannot hold shared resources indefinitely. Set `webui_keep_uploads_on_disconnect` to `False` to restore the previous behaviour, where closing or disconnecting a tab kills its upload. See [`DEFAULT` options](example-config.md#ux--safety-toggles). Restarting the WebUI server still stops every upload.
+
+## Monitoring and reviewing a run
+
+While an upload is active, the workspace changes from setup controls to live run information.
+
+### Execution status
+
+- The page header shows the current state and selected path.
+- **Execution Output** streams the Upload Assistant console.
+- **Binary Progress** reports progress from external tools when available.
+- **Now Processing** uses a poster-first live summary with provider identifiers, technical release details, overview, and category-specific metadata for movies, TV, books, music, games, and adult releases.
+- **Kill** terminates the active run.
+
+### Terminal and GUI output
+
+The **Terminal | GUI** switch above the output chooses how the run is shown. The choice is remembered in this browser, and you can switch at any time, including during a run; both views receive the same session.
+
+- **Terminal** shows the full Upload Assistant console, with the input bar for prompts.
+- **GUI** shows the run as a few panels and leaves out what the **Now Processing** preview already shows:
+  - **Stages:** metadata, confirmation, dupe check, screenshots, torrent, upload and requests, each marked as running, done, skipped or stopped. In a queue it also shows the current item.
+  - **Your input is needed:** the current prompt, with Yes/No buttons, a list of choices or a text field. Dupe prompts show the slot recommendation and the possible dupes with their size difference. The confirmation prompt shows the per-tracker release names and any missing fields.
+  - **Needs attention:** slot recommendations, possible dupes, missing region, distributor or IDs, and trackers skipped for missing disc details.
+  - **Errors:** errors, repeated ones counted once, and warnings in a collapsible list. **View in terminal** opens the full output, including tracebacks.
+  - **Results:** one row per tracker: uploaded (with duration and torrent link), failed, queued, dupe, banned or skipped, with the tracker's message. Requests found after the upload are listed with their reward.
+
+The GUI shows the same run as the terminal; answering a prompt in one view answers it in the other.
+
+### Generated screenshots
+
+When screenshot capture has completed, open **Screenshots** to review frames before image hosting. Screenshots are grouped for the main title and any additional discs or playlists.
+
+Depending on the screenshot state, you can:
+
+- expand a frame for a larger view;
+- **Replace** it with a frame captured at another point;
+- add another frame to the relevant group;
+- delete an eligible local or pending frame; or
+- undo a pending replacement and restore the original remote frame.
+
+The grid adapts to the available panel width, from one column in a narrow sidebar to multiple columns in a wider review panel.
+
+### Description review
+
+Open **Description** when a generated description is available. The review panel can show source versions, switch between edit and preview views, apply common BBCode formatting, save edits, and restore a source version.
+
+Changes made here affect the active upload's generated description; they do not rewrite the global description configuration.
+
+## Configuration workspace
+
+Configuration is arranged by task rather than mirroring the raw Python dictionary. The sidebar groups settings as follows:
+
+| Group          | Page                   | Includes                                                                                   |
+| -------------- | ---------------------- | ------------------------------------------------------------------------------------------ |
+| Settings       | General                | Main settings, WebUI settings, logging, and external tool paths.                           |
+| Settings       | Torrent Clients        | qBittorrent, rTorrent, Deluge, Transmission, and related client definitions.               |
+| Settings       | Metadata Services      | Metadata credentials, Arr integration, caching, and music metadata.                        |
+| Settings       | Image Hosting          | Image-host priority and host credentials.                                                  |
+| Settings       | Screenshot Handling    | Capture, processing, enhancements, disc menus, and contact sheets.                         |
+| Settings       | Description Formatting | General descriptions, packs, headers, Blu-ray details, spectrograms, and HDR plots.        |
+| Settings       | Upload Workflow        | Tracker search/import, tracker checks, torrent creation, upload, and post-upload behavior. |
+| Settings       | Usenet Uploads         | Usenet-specific services and upload configuration.                                         |
+| Trackers       | Default Trackers       | The trackers selected by default for uploads.                                              |
+| Trackers       | Configured Trackers    | Existing tracker credentials and overrides.                                                |
+| Trackers       | Available Trackers     | Templates for adding supported trackers.                                                   |
+| Administration | Security               | Two-factor authentication and API tokens.                                                  |
+| Administration | Access Log             | IP controls, logging level, and recent access activity.                                    |
+
+Hover or focus an information icon beside a setting to read its description. The [configuration reference](example-config.md) remains the authoritative detailed reference for defaults and implementation notes.
+
+Under **Configuration → General → WebUI Settings**, **Keep Uploads on Disconnect** controls whether uploads continue after their browser closes, reloads, or loses its connection. **Unattended Prompt Timeout (minutes)** limits how long an upload may wait at an unanswered prompt while no browser is connected; the default is 60 minutes, and `0` waits indefinitely. Saved changes apply to newly started uploads.
+
+The editor combines bundled defaults from `data/example_config.py` with overrides from the user-state `data/config.py`. If no usable `config.py` exists, the interface displays the example defaults and warns that they have not yet been saved. Successful configuration writes are recorded in `data/config_audit.log`; sensitive values are redacted from that audit trail.
+
+### Tracker API key expiry
+
+UNIT3D tracker cards display **API key expires soon** within 14 days of the last reported expiry, or **API key expired** after that date. The API key field has a **Check** button beside it and a compact status beside its heading, wrapping below the heading when space is limited. Hover, focus or tap that status for the exact expiry date and last-checked time. Checking makes a small authenticated search request with the entered key; it does not save pending configuration changes. If the field is empty, the check can use the tracker's key from the saved Prowlarr connection.
+
+An **API keys** indicator appears in the application rail when configured keys need attention: amber for approaching expiry, red if any have expired. Open it to see affected trackers and jump directly to their Config fields. On phones, the indicator appears in Config navigation and the Upload header. It uses the loaded tracker catalogue and makes no additional tracker requests. Checking a saved key updates the Config indicator immediately; checking an unsaved replacement leaves the saved key's warning in place. Reload the page to pick up observations made elsewhere.
+
+UA also learns expiry dates from normal UNIT3D searches, uploads and shared tracker metadata/check requests. Both the CLI and WebUI upload console warn once per selected tracker/key per run. Cached dates are checked when trackers are selected, and new observations can warn during the run. Warnings are advisory and do not block uploads or replace normal authentication checks.
+
+Expiry metadata is stored in the application database, `data/upload_assistant.sqlite3` under the user-state directory. Records contain a hash identifying the tracker, site and key, plus expiry and observation times; the API key itself is not stored there. Changing the key makes the old record inapplicable. These dates are observations, not a guarantee that a key has not subsequently been revoked.
+
+UA reads the ISO 8601 `X-Api-Key-Expires-At` response header and can also interpret an explicit `api_key.expires_at` value in a JSON response. LST documents that omitting the header on an authenticated response means no expiry. On other trackers, an omitted header means expiry is unknown; explicit JSON `null` means no expiry. Authentication errors, invalid dates and failed requests do not erase an earlier observation. Unknown and non-expiring keys do not generate warnings.
+
+### Personal release groups
+
+Under **Configuration → General → Main Settings**, enter a release-group name in **Personal Release Groups** and press Space, Enter, or comma to add it. Each group appears as a compact tag; select its **×** button to remove it. Matching is case-insensitive, and a detected matching group automatically marks the upload as a personal release.
+
+### Super-seed trackers
+
+For a configured qBittorrent client, enter UA tracker acronyms in **Super-Seed Trackers** and press Space, Enter, or comma. UA enables qBittorrent's super-seeding mode after adding a new, non-cross-seed upload to a listed tracker. [Super-seeding](https://www.bittorrent.org/beps/bep_0016.html) is intended for initial seeding servers and is not recommended for general use.
+
+### Pending changes
+
+Configuration edits are staged in the browser instead of being written immediately.
+
+- The header reports the number of unsaved changes.
+- Open **Pending changes** to review compact, human-readable summaries.
+- **Discard** restores one setting to its last saved value.
+- **Discard all changes** restores every staged value after confirmation.
+- **Save Config** writes the complete staged set.
+
+Tracker setup changes are grouped by tracker in the summary so that adding several fields does not fill the panel with every credential. Sensitive values are never printed there.
+
+### Image-host priority
+
+Each priority selector continues to list all configured image hosts, including hosts already selected in another position. This makes it possible to swap priorities before saving. Resolve any duplicate selections before choosing **Save Config**.
+
+### Trackers
+
+- Use **Default Trackers** to choose the normal starting set shown on the Upload page.
+- Use **Configured Trackers** to review, rename, edit, or remove existing tracker entries.
+- Use **Available Trackers** to add a supported tracker from its template.
+
+Configured and Available tracker searches accept names, tracker codes and CLI aliases, ignoring case. Search uses each tracker's saved alias (or its template alias if unsaved) and any pending alias edit. After saving an alias change, search uses the new alias.
+
+Each tracker's **Advanced → CLI Alias** field provides an optional shorthand for `-tk` or `--trackers`. The full tracker code still works regardless of the alias, and aliases do not rename tracker cards or change the default tracker list.
+
+On the Upload page, entering an alias such as `-tk ATH` highlights the corresponding tracker card. Alias matching ignores case and uses the saved configuration. Conflicting aliases are rejected when saving, using the same rules as the CLI; a batch can swap two aliases because validation uses the final values.
+
+Default and Configured Trackers also show the cached availability dot used by the Upload page. Choose **Check tracker status** to refresh those credential-free checks. Any detected issue is summarized above the tracker list; Available Trackers are not checked until they have been configured.
+
+New trackers and tracker edits remain pending until the configuration is saved.
+
+**Save Config** sends pending field edits together in one request, including changes across multiple trackers. All field edits in that batch are validated before the file is written. If the server rejects the save, the edits remain pending so you can correct them or retry without re-entering them.
+
+WebUI configuration writes share a lock with startup synchronization and replace the file atomically. Missing parent sections in sparse configurations are created during staging. External changes detected before replacement cause the save to be rejected, preserving the newer file and the pending WebUI edits.
+
+## Security and administration
+
+### Two-factor authentication
+
+Open **Configuration → Security** to set up authenticator-app 2FA:
+
+1. Start setup.
+2. Scan the QR code or enter the displayed secret manually.
+3. Store the recovery codes somewhere separate from the Upload Assistant host.
+4. Enter a current authenticator code to enable 2FA.
+
+Recovery codes are one-time credentials. Disabling 2FA clears its secret and recovery-code hashes.
+
+### API tokens
+
+API tokens allow supported programmatic requests to use `Authorization: Bearer <token>`.
+
+1. Enter a descriptive label and generate a token.
+2. Copy the token while it is visible.
+3. Choose **Store** to persist it.
+4. Revoke tokens that are no longer needed.
+
+Token-management and other sensitive administration endpoints still require an authenticated browser session with CSRF protection. Bearer tokens are accepted only by the supported subset of API endpoints; see the [WebUI API reference](web-ui-api.md).
+
+### IP controls and access logging
+
+Open **Configuration → Access Log** to manage:
+
+- the IP whitelist and blacklist;
+- access logging level (`Access denied`, `Access`, or `Disabled`); and
+- recent access-log entries.
+
+The blacklist takes precedence over the whitelist. Repeated failed API access attempts may add the source IP to the blacklist. Review IP changes carefully so that you do not lock out the device or reverse proxy used to administer the WebUI.
+
+The local account, encrypted credentials, token metadata, 2FA state, IP controls, and access-log level are stored in `webui_auth.json`. The WebUI creates its credential files readable only by the account that runs it. On POSIX systems it warns at startup when `config.py`, tracker cookie files, or its own credential files are readable by other users; restrict them with `chmod 600` on shared seedboxes. Access events are written to `access_log.log` in the same application configuration directory. The generated `session_secret` is also stored there unless `SESSION_SECRET` or `SESSION_SECRET_FILE` overrides it.
+
+### Request limits
+
+The WebUI limits request frequency to slow repeated sign-in attempts and protect server resources. Requests are counted separately for each endpoint and client IP; there is no single shared allowance for the whole WebUI. Most explicitly limited API endpoints also keep separate counters for authenticated and unauthenticated requests. Browsers or devices sharing a client IP can share an allowance.
+
+| Operation                                                                                     | Request limit                    |
+| --------------------------------------------------------------------------------------------- | -------------------------------- |
+| Routes without an explicit override, including config saves and most administration actions   | 50 per hour and 200 per day      |
+| Sign-in and recovery pages (`/login` and `/login/recovery`), including page loads and submits | 10 per minute and 100 per day    |
+| Health checks and configured browse-root listing                                              | Exempt                           |
+| Folder listings                                                                               | 600 per minute                   |
+| Recursive file searches                                                                       | 60 per minute                    |
+| External-tool status checks                                                                   | 60 per hour                      |
+| Tracker reachability refreshes, Prowlarr tests, and torrent-client connection tests           | 30 per hour for each endpoint    |
+| Tracker API-key status checks                                                                 | 120 per hour                     |
+| Live preview, screenshot listing, local screenshot images, and generated-description reads    | 7,200 per hour for each endpoint |
+| Start an upload or save an upload queue                                                       | 100 per hour for each endpoint   |
+| Send input to an upload process                                                               | 200 per hour                     |
+| Stop an upload process                                                                        | 50 per hour                      |
+
+An explicit limit replaces the default hourly and daily quotas. The higher allowance for live review applies to the read endpoints; editing descriptions or screenshots still uses the default limits. Each background refresh, folder listing, or configuration save counts as a request. One **Save Config** batch counts as one request regardless of the number of fields edited.
+
+Exceeding a limit returns HTTP 429. Allow the relevant minute, hour, or day window to expire before retrying. These counters are held in memory and reset when the WebUI process restarts. IP blacklisting after repeated authentication failures is a separate protection; see [IP controls and access logging](#ip-controls-and-access-logging).
+
+## Statistics
+
+Open **Stats** from the application workspace navigation to inspect local activity for today, this or last month, the last 7, 30, or 90 days, one year, a custom inclusive interval, or the full recorded period. The selected preset is remembered in the current browser. Real uploads and `--debug` simulations are stored and displayed separately.
+
+Use **Display** in the Stats toolbar to choose real activity or debug simulations, UTC or the browser's local date, and a regional date format. UTC remains the default. Browser-local mode makes presets such as **Today** follow the date on the device viewing the dashboard. Historical statistics remain stored in UTC calendar-day buckets, so activity near midnight remains assigned to its original UTC day; this limitation is also shown beside the setting. The same dialog can hide an entire summary group, individual cards within a group, or detailed dashboard sections. It can also add a soft color gradient around Daily activity lines and hide tracker/indexer favicons. Display preferences are saved in the current browser and do not delete or stop collection of hidden data.
+
+The dashboard includes upload success and pioneering rates by destination, a route Sankey, media categories and technical profiles, a resolution×video/HDR matrix, torrents and NZBs created or reused, cache hit rates, logical external operations, known payload bytes sent through NNTP and successful image uploads, and CLI versus WebUI usage. **Successful media time** shows the total uploaded runtime and its Movie, TV, Sports, XXX, Audiobook, and Music distribution. Each successfully processed item is counted once globally even when it was uploaded to several destinations; selecting a tracker shows the runtime successfully uploaded to that destination. Unknown runtimes and content without a meaningful duration, such as ebooks and games, are excluded. The timeline switches between event counts, processed/uploaded volume, or both scales. Clicking a destination filters content metrics across the dashboard; cache and external-operation metrics remain global and are labeled accordingly. Dolby Vision profiles and compatible HDR layers are retained in combined buckets. The dashboard also shows unique uploaded volume, duplicate prevention, an estimate of hashing I/O avoided by reused base torrents, a 52-week activity heatmap, and comparisons with the previous equal-length period. WEB items are grouped by their identified streaming service, with unidentified WEB sources shown as **Unknown**. Personal releases are compared with standard releases and include aggregate results, success rate, category, and unique volume. Operations whose payload size is not measured display an em dash instead of a misleading zero. Distribution sections show local SVG donut charts with their exact sortable tables available in an expandable area directly below each chart. A logical external operation represents one adapter action; redirects and internal retries do not create additional hits.
+
+The dashboard also measures where time and effort go:
+
+- **Hashing throughput** is the volume hashed into new torrents divided by the hashing time (waiting for a free hashing slot is not counted). **Hashing I/O avoided** uses it to estimate how much hashing time reused base torrents saved. A base torrent counts as reused when it came from a torrent client, whichever stage found it.
+- **Time per stage** shows the average and total time of each run stage (preparation, confirmation, dupe checks, screenshots and image uploads, torrent creation, upload and request search), plus the average time of a whole item. Confirmation and dupe checks include the time spent waiting for your answers.
+- **Upload problems** groups failed and skipped routes by a short category, such as _Authentication_, _Rate limited_, _Timeout_, _Server error_, _Rejected by tracker_, _Duplicate_, _Banned group_, _Missing fields_ or _Too few trackers_. The category is derived from the tracker's response; the response text itself is never stored. The same categories appear in the **Uploads by destination** table.
+- **External operations** also counts requests to metadata providers (TMDB, IMDb, TVDB, TVmaze, IGDB, AniList, MusicBrainz, Discogs, Open Library, Google Books, Audible and similar). Each request keeps the provider name, outcome and duration, plus the day, count, source, mode and media category. No URL, query or media ID is kept. A provider's "not found" answer counts as a successful request.
+- **Image hosts** shows each host's success rate, average time per image and volume, and how often uploads moved on to the next configured host. Each image counts as one operation.
+- **After upload** counts cross-seeds added to a torrent client (once per tracker), exact and partial request matches, and trump reports sent.
+
+Hashing throughput, stage times and image hosts describe the whole installation, so they stay global when a tracker is selected.
+
+Open the **⋯** actions menu to download the current filtered response as JSON, export the daily timeline as CSV, or reset statistics. Export runs locally in the browser and does not add another server-side data store. Tracker reliability labels are derived from the displayed success rate: they summarize aggregate outcomes and are not an uptime monitor.
+
+Statistics are daily aggregates. Upload Assistant does not store release names, paths, release-group names or tags, external media IDs, URLs, or credentials in the statistics tables. Personal releases are stored only as a `personal` or `standard` aggregate. Collection begins when the feature is installed; existing cache files and logs are not scanned or backfilled, though later accesses to an existing cache count as new hits or misses.
+
+Statistics are stored in the application database, `data/upload_assistant.sqlite3` below the user-state directory. Versions before the shared database used `data/stats.sqlite3` and `data/api_key_expiry.sqlite3`; their contents are copied into the new file once, when it is created, and the old files are then no longer read or written. A file that cannot be read (for example, a damaged one or an unsupported older statistics format) is skipped, so keep the old files, or a backup of them, until you have checked that your statistics appear on the Stats page. Collection is disabled by default; set `DEFAULT.stats_enabled` to `True` to opt in. While disabled, the dashboard is blocked and does not return or display previously collected aggregates. Stored aggregates remain intact and become visible again if collection is re-enabled. **Reset statistics** in the actions menu requires typing `RESET` and removes only statistics; it never removes cache entries, configuration, torrents, or NZBs.
+
+## History
+
+Open **History** from the application workspace navigation to see every release processed on this installation, newest first. An entry is added when an item finishes, including items that failed, were skipped at a prompt, were unsupported, or did not reach any tracker. Runs started with `--debug` are not recorded.
+
+Each entry keeps the release name, path, size, category and release details, its external IDs (IMDb, TMDb, TVDB, TVmaze, MAL, IGDB, Douban, Discogs, ISBN, and others) with links to their pages where one exists, every tracker's final result with its message, duration, and torrent link, the possible dupes and slot recommendation shown for each tracker, and request matches with their rewards. CLI and Web UI runs are both recorded.
+
+Search matches the release name, title, release group, and path, and the release's external IDs. IMDb (`tt0123456`), TMDb (`movie/42`, `tv/42`), ISBN, ASIN, and Open Library IDs match as typed, without regard to case or hyphens. For any ID, put the provider first: `imdb:`, `tmdb:`, `tvdb:`, `tvmaze:`, `mal:`, `douban:`, `igdb:`, `discogs:` (or `discogs_release:` and `discogs_master:`), `isbn:`, `asin:`, `openlibrary:`, `tpdb:`, or `blvckout:`, for example `tvdb:12345` or `tmdb:42` (movie or TV). ThePornDB IDs are stored as `scenes/ID`, `movies/ID` or `jav/ID`; `tpdb:ID` matches any of them, and `tpdb:scenes/ID` only that kind. Without a prefix, a number matches TVDB, TVmaze, MAL, Douban, IGDB, and Discogs IDs only through the release's text, so a year such as `2020` does not match those IDs; a number that is a whole ISBN or ASIN (for example `9780000000001`) still matches it. With `discogs:`, a kind in the value (`discogs:master/45` or a Discogs URL) searches only that kind. Filters narrow the list by category, tracker, tracker result (for example, every release that failed on one tracker), entries with request matches, and a date range in the browser's local time. The outcome buttons show how many entries match the other filters. Select an entry to see its details, copy its path, delete it, or choose **Upload again** to open the Upload page with its path in the queue. **CSV** and **JSON** download every entry matching the current filters (up to 100,000), with IDs, tracker results, links, and request matches; in the CSV, cells that a spreadsheet would run as a formula are prefixed with an apostrophe. **Clear history** requires typing `CLEAR` and removes only history entries; statistics, caches, configuration, torrents, and NZBs are untouched.
+
+### Saved IDs and answers
+
+Upload Assistant also remembers, per release, the external IDs you confirmed and the answers you gave to its questions (for example, adult tags or a game's platform). The next time the same release is processed, even from a renamed folder or after its `tmp` folder was deleted, those IDs are used as if they had been passed with `--imdb`, `--tmdb`, `--tvdb`, `--tvmaze`, `--mal`, `--douban`, `--igdb`, the Discogs options, `--isbn`, `--asin`, `--openlibrary`, `--tpdb`, or `--blvckout`, and the answers are not asked again. The log names each reused ID.
+
+- A release is recognised by the relative paths and sizes of its files (files under 1 MiB, such as NFOs, are ignored when larger files exist), so adding or replacing a media file makes it a new release.
+- IDs are remembered only after you answer **yes** to "Is this correct?", or after an upload with them succeeds. IDs found automatically in an unattended run that uploaded nothing, or found after the confirmation (for example by tracker checks) in a run that uploaded nothing, are not remembered. A confirmed run without any IDs keeps the ones saved earlier.
+- IDs are reused only when the release still has the same category (a release first guessed as a movie takes the TV category it was confirmed with) and no ID was given on the command line. They replace IDs found automatically, such as from scene or tracker data. Saved IDs are used together or not at all, so a corrected `--imdb` is never paired with an old `--tmdb`. Answers given with `--answer` also win over saved ones.
+- Debug runs are remembered too, so IDs confirmed during a `--debug` run are reused by the real upload. This does not depend on `history_enabled`.
+- Pass `--no-saved-ids` to search for the IDs again; correcting an ID at the confirmation prompt replaces the saved one.
+
+Recording is controlled by `DEFAULT.history_enabled`, which is on by default. Turning it off stops new entries without deleting stored ones. Set `DEFAULT.history_retention_days` to delete entries older than that many days each time a new one is recorded; the default, `0`, keeps them forever. The history is stored in the application database, `data/upload_assistant.sqlite3` below the user-state directory. Unlike the statistics tables, it contains release names, paths, and links, so treat a copy of that file like your upload logs.
+
+## Appearance, Help, and Changelog
+
+### Appearance
+
+Appearance is shared by the Upload, Configuration, sign-in, and recovery interfaces. Choose:
+
+- a color theme: Amber (the default), Amethyst, Charcoal, Evergreen, Graphite, Midnight, or Obsidian;
+- Rounded (the default) or Square corners; and
+- Light or Dark mode.
+
+These preferences are stored in the browser, so another browser or device can use different choices. A browser that already saved a theme or corner style keeps it; choose **Amber** and **Rounded** to switch to the current default look.
+
+The interface uses the bundled Inter and JetBrains Mono typefaces, so it looks the same on every system and needs no font downloads.
+
+### Help & Resources
+
+Help links to the documentation home, this WebUI guide, configuration and CLI references, description-builder guidance, and platform installation guides. Links open the current `development` documentation on GitHub in a new tab.
+
+### Updates and changelog
+
+When update notifications are enabled, the WebUI checks GitHub when the page loads or becomes visible and polls again every 30 minutes while it remains open. A successful result is reused for `update_notification_cache_hours` (four hours by default), so polling does not normally make a new GitHub request every time. An available update is shown on the application rail.
+
+Open **Help & Resources** and choose **Check now** to bypass the normal cache. **View changelog** opens release history with filters for WebUI, Core, Trackers, Configuration, and Dependencies changes. Dependency updates, including bundled tools and development packages, appear in their own section while retaining contributor attribution and pull request links. A separate, collapsed **Development — Unreleased** panel lists commits merged into the development branch since the latest official release; its commits use the same area filters and change-type badges as released entries, but may change before publication. The current installed release and latest release have separate badges. If GitHub cannot be reached, cached or bundled release information is used when available.
+
+The changelog is derived from the normal Upload Assistant releases; WebUI changes are categorized within those releases rather than using a separate version number.
+
+## Mobile layout
+
+The same functions are reorganized for smaller screens:
+
+- Upload, Configuration, and Stats are available in the compact workspace navigation.
+- Files, Upload, and Arguments move to bottom navigation.
+- During a run, those destinations adapt to Progress, media information, Screenshots, and Description when available.
+- Help, Changelog, and Appearance open as viewport-sized dialogs with their own scrolling content.
+- Configuration uses a compact settings navigator while preserving pending-change and save controls.
+
+Phones retain the tabbed Upload workspace and compact Configuration navigator in landscape, using the additional width for the active panel. On supported mobile browsers, requesting the desktop site opts back into the desktop workspace.
+
+Resizable desktop sidebar widths do not change the mobile layout.
+
+## Troubleshooting
+
+### The File Browser is empty
+
+- For a source install, pass at least one path before `--webui` or set `UA_BROWSE_ROOTS`.
+- For Docker, set `UA_BROWSE_ROOTS` to the container-side paths and confirm matching volumes are mounted.
+- Confirm the runtime user can read the selected directories.
+
+### `CSRF/Origin validation failed`
+
+- Refresh the page and sign in again if requested.
+- Use one consistent hostname or IP address; changing between them creates a different browser origin.
+- If a reverse proxy is used, set `UA_WEBUI_TRUSTED_PROXY_COUNT` to the number of trusted proxy hops and preserve the original host and scheme so the request `Origin` matches the public WebUI address.
+- Clear the site's stored data and sign in again if an old tab retained stale session data.
+
+### Update checking does not finish or reports an error
+
+A manual GitHub check can take up to about 15 seconds. Confirm the host can reach GitHub and that a proxy or firewall is not blocking the request. Cached release history remains available after a successful earlier check.
+
+### Cloudflare proxy caching
+
+Cloudflare is not required and normally needs no WebUI-specific setting. If a proxied WebUI loads stale assets or behaves differently from a direct connection, the original WebUI guidance recommended disabling Cloudflare **Real User Measurements** and purging its cache. Treat those as troubleshooting steps rather than mandatory setup:
+
+- first bypass or clear caching for the WebUI's HTML and static assets;
+- disable Real User Measurements if injected monitoring still interferes; and
+- confirm the proxy preserves the public host and scheme through `Host`, `X-Forwarded-Proto`, or Cloudflare's `Cf-Visitor` header.
+
+Prefer a targeted cache purge when possible; **Purge Everything** is the broad fallback described by the original guidance.
+
+### The interface still shows an older layout
+
+Perform a hard refresh or clear the site's cached files after updating Upload Assistant. This is especially relevant when testing a branch that changes JavaScript or CSS assets.
+
+### Account or 2FA recovery
+
+Use a saved recovery code when possible. If the account cannot be recovered, stop the WebUI and remove `webui_auth.json` from the application configuration directory to return to first-run account setup.
+
+This reset removes the local account, API tokens, 2FA secret, and remaining recovery codes. Creating the new account also signs out every existing browser session and remember-me cookie. Keep the persisted session secret intact unless you intentionally need to invalidate encrypted state.
+
+Common authentication-state locations are:
+
+- Windows: `%APPDATA%\upload-assistant\`
+- Linux or macOS with XDG configured: `$XDG_CONFIG_HOME/upload-assistant/`
+- Linux or macOS default: `~/.config/upload-assistant/`
+- legacy source setups: the repository `data/` directory
+
+## Related documentation
+
+- [WebUI Quick Start](web-ui-basic.md)
+- [Docker WebUI / Unraid setup](docker-gui.md)
+- [Configuration reference](example-config.md)
+- [CLI arguments](cli-args.md)
+- [Description builder](description-builder.md)
+- [WebUI API reference](web-ui-api.md)

@@ -1,4 +1,7 @@
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
 
 from src.integrations.trackers.AVISTAZ.cinemaz import CinemaZ
 

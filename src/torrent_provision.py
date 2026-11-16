@@ -1,0 +1,117 @@
+"""Select or create policy-compliant base torrents before tracker uploads."""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import threading
+from collections.abc import Mapping, Sequence
+from pathlib import Path
+from typing import Any, TypeIs, cast
+
+from src.console import logger
+from src.meta import Meta
+from src.torrent_manifest import TorrentLayout, TorrentManifest
+from src.torrent_policy import GENERIC_POLICY, MIB, PIECE_SIZE_MAX, PIECE_SIZE_MIN, TorrentPolicy
+from src.torrentcreate import TorrentCreator
+
+_locks: dict[str, asyncio.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _is_str_mapping(val: object) -> TypeIs[Mapping[str, Any]]:
+    return isinstance(val, Mapping)
+
+
+def _variant_lock(meta: Meta, layout: TorrentLayout, policy: TorrentPolicy) -> asyncio.Lock:
+    key = f"{Path(meta.base_dir).resolve()}:{meta.uuid}:{layout}:{policy!r}"
+    with _locks_guard:
+        return _locks.setdefault(key, asyncio.Lock())
+
+
+def _preferred_variants(meta: Meta, manifest: TorrentManifest, layout: TorrentLayout) -> list[str | Path | None]:
+    """Return the torrents already chosen for this run, most specific first."""
+    layout_choice = meta.subs_reuse_torrent_path if layout == "base_subs" else meta.base_reuse_torrent_path
+    return [layout_choice, meta.reuse_torrent_path, manifest.default_path(layout)]
+
+
+def _content_size(path: str | os.PathLike[str]) -> int:
+    source = Path(path)
+    if source.is_file():
+        return source.stat().st_size
+    return sum(item.stat().st_size for item in source.rglob("*") if item.is_file())
+
+
+async def provision_tracker_torrents(
+    meta: Meta,
+    config: Mapping[str, Any],
+    trackers: Sequence[str],
+    tracker_class_map: Mapping[str, Any],
+) -> set[str]:
+    """Prepare manifest selections and return trackers blocked by constraints."""
+    manifest = TorrentManifest(meta.base_dir, meta.uuid)
+    blocked: dict[str, str] = {}
+    raw_tracker_configs: object = config.get("TRACKERS", {})
+    tracker_configs: Mapping[str, Any] = raw_tracker_configs if _is_str_mapping(raw_tracker_configs) else {}
+
+    for raw_tracker in trackers:
+        tracker = str(raw_tracker).strip().upper()
+        try:
+            factory = tracker_class_map.get(tracker)
+            if factory is None or getattr(factory, "is_usenet", False):
+                continue
+            tracker_settings: object = tracker_configs.get(tracker, {})
+            allow_subs = _is_str_mapping(tracker_settings) and bool(tracker_settings.get("allow_ext_subtitles", False))
+            layout: TorrentLayout = "base_subs" if allow_subs and manifest.default_path("base_subs") is not None else "base"
+            policy = cast(TorrentPolicy | None, getattr(factory, "torrent_policy", None))
+            if manifest.select(tracker, layout, policy, preferred=_preferred_variants(meta, manifest, layout)) is not None:
+                continue
+            if meta.nohash:
+                blocked[tracker] = "Skipped: no policy-compliant torrent is available and hashing is disabled"
+                continue
+            if policy is None:
+                # No base exists yet: creating it is not this step's task.
+                if not manifest.entries(layout):
+                    continue
+                # Every stored variant exceeds the largest supported piece size.
+                policy = GENERIC_POLICY
+
+            async with _variant_lock(meta, layout, policy):
+                if manifest.select(tracker, layout, policy, preferred=_preferred_variants(meta, manifest, layout)) is not None:
+                    continue
+                if meta.path is None:
+                    blocked[tracker] = "Skipped: source path is unavailable for torrent creation"
+                    continue
+                content_size = await asyncio.to_thread(_content_size, meta.path)
+                hash_meta = meta.copy()
+                hash_meta.trackers = [tracker]
+                default_piece_size = TorrentCreator.calculate_piece_size(
+                    content_size,
+                    PIECE_SIZE_MIN,
+                    PIECE_SIZE_MAX,
+                    hash_meta,
+                    piece_size=meta.max_piece_size,
+                )
+                chosen = policy.choose_piece_size(content_size, default_piece_size)
+                output = "BASE_SUBS" if layout == "base_subs" else "BASE"
+                logger.info(f"{tracker}: [yellow]Creating a policy-compliant {chosen / MIB:g} MiB base torrent.[/yellow]")
+                try:
+                    cooldown = int(cast(Mapping[str, Any], config.get("DEFAULT", {})).get("rehash_cooldown", 0) or 0)
+                except TypeError, ValueError:
+                    cooldown = 0
+                if cooldown > 0:
+                    await asyncio.sleep(cooldown)
+                await TorrentCreator.create_torrent(hash_meta, Path(meta.path), output, piece_size=max(1, chosen // MIB))
+                if manifest.select(tracker, layout, policy, preferred=_preferred_variants(meta, manifest, layout)) is None:
+                    blocked[tracker] = "Skipped: generated torrent does not satisfy the tracker policy"
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            blocked[tracker] = f"Skipped: torrent provisioning failed: {error}"
+
+    for tracker, reason in blocked.items():
+        status = meta.tracker_status.setdefault(tracker, {})
+        status["upload"] = False
+        status["status_message"] = reason
+        logger.info(f"[yellow]{tracker}: {status['status_message']}[/yellow]")
+    return set(blocked)

@@ -23,13 +23,43 @@ class AsianCinema(UNIT3D):
     requests_url = f"{base_url}/api/requests/filter"
     search_url = f"{base_url}/api/torrents/filter"
     torrent_url = f"{base_url}/torrents/"
-    supported_categories = ("TV", "MOVIE")
+    supported_categories = ("TV", "MOVIE", "MUSIC")
     tracker_urls = ("https://eiga.moi",)
 
     def __init__(self, config: dict[str, Any]):
         super().__init__(config, tracker_name="ASIANCINEMA")
         self.config = config
         self.common = Common(config)
+
+    async def get_category_id(self, meta: Meta, category: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+        category_id = {"MOVIE": "1", "TV": "2", "MUSIC": "3"}
+        if mapping_only:
+            return category_id
+        if reverse:
+            return {v: k for k, v in category_id.items()}
+        return {"category_id": category_id.get(category or meta.category, "0")}
+
+    async def get_type_id(self, meta: Meta, type: str = "", reverse: bool = False, mapping_only: bool = False) -> dict[str, str]:
+        type_id = {
+            "DISC": "1",
+            "REMUX": "7",
+            "WEBDL": "9",
+            "SDTV": "13",
+            "FLAC": "15",
+            "HDTV": "17",
+            "UHDTV": "19",
+        }
+        if mapping_only:
+            return type_id
+        if reverse:
+            return {v: k for k, v in type_id.items()}
+
+        resolved_type = type or meta.type or ""
+        if not type and meta.category == "MUSIC":
+            resolved_type = meta.format or resolved_type
+        elif not type and resolved_type == "HDTV" and meta.source in ("SDTV", "UHDTV"):
+            resolved_type = meta.source
+        return {"type_id": type_id.get(resolved_type, "0")}
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         asia = [
@@ -134,43 +164,8 @@ class AsianCinema(UNIT3D):
             return " [No Eng subs]"
         return f" [{subs[0][:3]} subs only]"
 
-    async def get_keywords(self, meta: Meta) -> dict[str, str]:
-        keywords_list = [k.strip() for k in meta.keywords if k.strip()]
-
-        return {"keywords": ", ".join(keywords_list[:10])}
-
-    async def get_region_id(self, meta: Meta) -> dict[str, str]:
-        region_map = {
-            "KOR": "1",
-            "JPN": "3",
-            "CHN": "2",
-            "TWN": "4",
-            "SGP": "5",
-            "PHI": "6",
-            "THA": "7",
-            "VIE": "8",
-            "MAS": "9",
-            "IDN": "10",
-            "CAM": "11",
-            "LAO": "12",
-            "HKG": "13",
-            "USA": "14",
-            "GBR": "15",
-            "ESP": "16",
-            "GER": "17",
-            "FRA": "18",
-            "EUR": "19",
-            "MEX": "20",
-            "AUS": "21",
-            "IND": "22",
-            "RUS": "23",
-            "AUT": "24",
-            "NLD": "25",
-            "POL": "26",
-        }
-        region = meta.region
-
-        return {"region_id": region_map.get(region, "")}
+    async def get_keywords(self, meta: Meta, max_terms: int | None = 10) -> dict[str, str]:
+        return await super().get_keywords(meta, max_terms)
 
     @staticmethod
     def _original_title_separator() -> str:

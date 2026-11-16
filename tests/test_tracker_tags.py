@@ -15,7 +15,7 @@ def test_get_tags_removes_accents_from_mapped_tags(tracker_class):
         category="MOVIE", genres=["Action", "Mystery"], keywords=[]
     )
 
-    tags = asyncio.run(tracker.get_tags(meta))
+    tags = asyncio.run(common.get_portuguese_tags(meta, tracker=tracker_name, tmdb_data={}))
 
     assert tags == "acao, misterio"
     assert tags.isascii()

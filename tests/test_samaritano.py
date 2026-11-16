@@ -96,14 +96,14 @@ def test_capybarabr_formats_dvdrips_with_resolution_before_audio_and_codec() -> 
 ):
     meta = Meta(
         category="MOVIE",
-        name="Example Movie 2001 DVD x264 DVDRip DD 2.0-DDOS",
+        name="Example Movie 2001 DVD x264 DVDRip DD 2.0-DDFAKE",
         title="Example Movie",
         year=2001,
         type="DVDRIP",
         resolution="480p",
         audio="DD 2.0",
         video_encode="x264",
-        tag="-DDOS",
+        tag="-DDFAKE",
     )
 
     name = asyncio.run(CapybaraBR({"TRACKERS": {}}).get_name(meta))["name"]

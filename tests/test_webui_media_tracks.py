@@ -1,0 +1,167 @@
+# ruff: noqa: S101
+import pytest
+
+from web_ui.server import _extract_preview_media_tracks
+
+
+def test_extract_preview_media_tracks_from_mediainfo_media_track() -> None:
+    meta = {
+        "mediainfo": {
+            "media": {
+                "track": [
+                    {"@type": "General", "Format": "Matroska"},
+                    {
+                        "@type": "Audio",
+                        "Language_String": "English",
+                        "Title": "English Dolby TrueHD Atmos",
+                        "Format": "MLP FBA",
+                        "Format_Commercial_IfAny": "Dolby TrueHD with Dolby Atmos",
+                        "ChannelLayout": "L R C LFE Ls Rs Lb Rb",
+                        "BitRate": "4281000",
+                        "Default": "Yes",
+                    },
+                    {
+                        "@type": "Audio",
+                        "Language": "Japanese",
+                        "Title": "Japanese Stereo",
+                        "Format": "FLAC",
+                        "Channels": "2",
+                        "BitRate_String": "1 438 kb/s",
+                    },
+                    {
+                        "@type": "Text",
+                        "Language_String": "English",
+                        "Title": "English Forced",
+                        "Format": "PGS",
+                        "Forced": "Yes",
+                    },
+                    {
+                        "@type": "Text",
+                        "Language_String": "English",
+                        "Title": "English SDH",
+                        "Format": "PGS",
+                        "HearingImpaired": "Yes",
+                    },
+                ]
+            }
+        }
+    }
+
+    audio, subtitles = _extract_preview_media_tracks(meta)
+
+    assert len(audio) == 2
+    assert audio[0]["index"] == 1
+    assert audio[0]["language"] == "English"
+    assert audio[0]["title"] == "English Dolby TrueHD Atmos"
+    assert audio[0]["format"] == "Dolby TrueHD with Dolby Atmos"
+    assert audio[0]["bitrate"] == "4281 kbps"
+    assert audio[0]["default"] is True
+    assert audio[1]["language"] == "Japanese"
+    assert audio[1]["bitrate"] == "1 438 kb/s"
+
+    assert len(subtitles) == 2
+    assert subtitles[0]["forced"] is True
+    assert subtitles[1]["hearing_impaired"] is True
+
+
+def test_extract_preview_media_tracks_supports_alternate_track_layout_and_flags() -> None:
+    meta = {
+        "mediainfo": {
+            "tracks": [
+                {
+                    "TrackType": "Audio",
+                    "language": "English",
+                    "title": "Director Commentary",
+                    "codec": "AC-3",
+                    "channels": "2",
+                    "ServiceKind": "Commentary",
+                },
+                {
+                    "type": "subtitle",
+                    "language": "Spanish",
+                    "format": "UTF-8",
+                    "default": "true",
+                },
+            ]
+        }
+    }
+
+    audio, subtitles = _extract_preview_media_tracks(meta)
+
+    assert audio == [
+        {
+            "index": 1,
+            "language": "English",
+            "language_code": "English",
+            "title": "Director Commentary",
+            "format": "AC-3",
+            "channels": "2",
+            "bitrate": "",
+            "default": False,
+            "forced": False,
+            "hearing_impaired": False,
+            "commentary": True,
+        }
+    ]
+    assert subtitles[0]["language"] == "Spanish"
+    assert subtitles[0]["format"] == "UTF-8"
+    assert subtitles[0]["default"] is True
+
+
+@pytest.mark.parametrize("track_type", ["Audio", "Text"])
+@pytest.mark.parametrize("title_key", ["Title", "TITLE"])
+@pytest.mark.parametrize("empty_title", [None, "", "  ", {}, []])
+def test_extract_preview_media_tracks_omits_empty_titles(track_type, title_key, empty_title) -> None:
+    meta = {"mediainfo": {"tracks": [{"@type": track_type, title_key: empty_title, "Language": "en"}]}}
+
+    audio, subtitles = _extract_preview_media_tracks(meta)
+
+    track = (audio or subtitles)[0]
+    assert track["title"] == ""
+    assert track["language"] == "en"
+
+
+def test_extract_preview_media_tracks_skips_empty_placeholders_for_fallback_values() -> None:
+    meta = {
+        "mediainfo": {
+            "tracks": [
+                {
+                    "@type": "Audio",
+                    "Title": {},
+                    "TrackTitle": "Director Commentary",
+                    "Language_String": {},
+                    "Language": "English",
+                    "Format_Commercial_IfAny": {},
+                    "Format": "AC-3",
+                    "ChannelLayout": {},
+                    "Channels": 2,
+                    "BitRate_String": {},
+                    "BitRate": 256000,
+                    "Default": True,
+                },
+                {"@type": "Text", "Title": {}, "TRACKTITLE": "SDH", "Format": "UTF-8"},
+            ]
+        }
+    }
+
+    audio, subtitles = _extract_preview_media_tracks(meta)
+
+    assert audio[0]["title"] == "Director Commentary"
+    assert audio[0]["commentary"] is True
+    assert audio[0]["language"] == "English"
+    assert audio[0]["format"] == "AC-3"
+    assert audio[0]["channels"] == "2"
+    assert audio[0]["bitrate"] == "256 kbps"
+    assert audio[0]["default"] is True
+    assert subtitles[0]["title"] == "SDH"
+
+
+@pytest.mark.parametrize("track_type", ["Audio", "Text"])
+def test_extract_preview_media_tracks_preserves_regional_language_code(track_type) -> None:
+    meta = {"mediainfo": {"tracks": [{"@type": track_type, "Language_String": "Portuguese", "Language": "pt-BR"}]}}
+
+    audio, subtitles = _extract_preview_media_tracks(meta)
+
+    track = (audio or subtitles)[0]
+    assert track["language"] == "Portuguese"
+    assert track["language_code"] == "pt-BR"

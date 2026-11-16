@@ -7,7 +7,7 @@ def test_archive_password_cli_override_preserves_random_mode(tmp_path):
         [str(tmp_path), "--archive-password", "random"], Meta()
     )
 
-    assert meta.archive_password == "random"
+    assert meta.archive_password == "random"  # noqa: S105
     assert meta.usenet_archive_password_is_random is True
 
 
@@ -16,7 +16,7 @@ def test_archive_password_cli_override_marks_static_password(tmp_path):
         [str(tmp_path), "--archive-password", "per-run-password"], Meta()
     )
 
-    assert meta.archive_password == "per-run-password"
+    assert meta.archive_password == "per-run-password"  # noqa: S105
     assert meta.usenet_archive_password_is_random is False
 
 
@@ -61,4 +61,5 @@ def test_overview_cli_override_alias_flag(tmp_path):
     )
 
     assert meta.overview == "Alias synopsis"
+    assert meta.manual_overview == "Alias synopsis"
     assert meta.book_overview == "Alias synopsis"

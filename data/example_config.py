@@ -3,10 +3,10 @@ from typing import Any
 
 config: dict[str, Any] = {
     "DEFAULT": {
-        # MAIN SETTINGS
-        # will print a notice if an update is available
+        # --- MAIN SETTINGS ---
+        # Set to True to display a notice when an update is available.
         "update_notification": True,
-        # will print the changelog if an update is available
+        # Set to True to display the changelog when an update is available.
         "verbose_notification": False,
         # Number of hours to reuse a successful update check. Set to 0 to check every run.
         "update_notification_cache_hours": 4,
@@ -56,18 +56,24 @@ config: dict[str, Any] = {
             # Book, audiobook, and comic metadata. This data changes rarely,
             # so the default here is 30 days (720 hours).
             "google_books": {"enabled": True, "ttl_hours": 720},
+            # Audible catalog metadata and user rating counts change more often.
+            "audible": {"enabled": True, "ttl_hours": 24},
             # Work IDs, ISBNs, and author names from OpenLibrary.
             "openlibrary": {"enabled": True, "ttl_hours": 720},
             # Data fetched from a MAM account; a shorter duration reflects changes.
             "myanonamouse": {"enabled": True, "ttl_hours": 24},
+            # Private-tracker game metadata can be edited, so keep this relatively fresh.
+            "gazellegames": {"enabled": True, "ttl_hours": 24},
             # Music release metadata; it also uses 30 days because it changes rarely.
             "musicbrainz": {"enabled": True, "ttl_hours": 720},
+            # XXX scene and movie metadata from ThePornDB and BLVCKOUT.
+            "tpdb": {"enabled": True, "ttl_hours": 168},
+            "blvckout": {"enabled": True, "ttl_hours": 168},
             "discogs": {"enabled": True, "ttl_hours": 720},
         },
-        # TRACKER METADATA CACHE
-        # Saves metadata fetched from a tracker when you provide a specific
-        # torrent ID (for example, --ptp, --hdb, or a tracker link in a torrent
-        # comment). It never caches dupe checks or broad name searches.
+        # Tracker-ID metadata cache
+        # Cache tracker metadata when you provide a specific torrent ID, such as --ptp, --hdb,
+        # or a tracker link in a torrent comment. Duplicate checks and broad searches are never cached.
         "tracker_metadata_cache_enabled": True,
         # Folder for cached tracker responses. You normally do not need to
         # change this setting.
@@ -165,25 +171,29 @@ config: dict[str, Any] = {
         "image_upload_concurrency": 0,
         # Delay between starting image uploads, in seconds.
         "image_upload_delay": 0.0,
-        # image host api keys
-        "imgbb_api": "",
-        "lostimg_api": "",
-        "lensdump_api": "",
-        "ptscreens_api": "",
-        "onlyimage_api": "",
+        # Minimum number of successful image uploads required to continue.
+        "min_successful_image_uploads": "3",
+        # Image-host credentials
+        # Optional Catbox userhash. Leave blank for anonymous uploads.
+        "catbox_userhash": "",
         "dalexni_api": "",
+        "imgbb_api": "",
+        "lensdump_api": "",
+        "lostimg_api": "",
+        # LuminaPix (luminapix.eu) API key, the only image host Kufirc accepts.
+        "luminapix_api": "",
+        "onlyimage_api": "",
         "passtheima_ge_api": "",
-        # custom zipline url
-        "zipline_url": "",
-        "zipline_api_key": "",
+        "ptscreens_api": "",
         # MidnightScene (Zipline) API key. Sign in, click your avatar, then choose
         # "Copy token" (or open Settings > User). Never share or commit this token.
         "midnightscene_api_key": "",
-        # SEEDPOOL CDN API key
+        # Seedpool CDN API key
         "seedpool_cdn_api": "",
         # ShareX-style image host (IMageHosting) token
         "sharex_url": "https://img.digitalcore.club/api/upload",
         "sharex_api_key": "",
+        "thrimg_api": "",
         # utp.pm API key
         "utppm_api": "",
         # GETTING METADATA
@@ -262,29 +272,20 @@ config: dict[str, Any] = {
         # If there are at least this many screenshots already, perhaps pulled from existing
         # description, skip creating and uploading any further screenshots.
         "cutoff_screens": "4",
-        # Overlay Frame number/type and "Tonemapped" if applicable to screenshots
-        "frame_overlay": False,
-        # Overlay text size (scales with resolution)
-        "overlay_text_size": "18",
-        # Limit how many ffmpeg processes can run at once
-        # The final value will be the minimum, between this value and number of screens being processed
+        # Keep screenshots at the coded dimensions reported by MediaInfo.
+        # Set to True only to convert non-square-pixel video to its display geometry.
+        # This can change dimensions such as 1920x1040 to 1924x1040.
+        "scale_screenshots_for_par": False,
+        # Apply PAR scaling to DVD screenshots and DVD menu captures by default.
+        # Set to False to keep their coded dimensions instead.
+        "scale_dvd_screenshots_for_par": True,
+        # Maximum number of FFmpeg processes that can run at once.
+        # The effective limit is the lower of this value and the number of screenshots.
         "process_limit": "4",
-        # Set true to limit the amount of CPU when running ffmpeg.
-        # This places an additional limitation on ffmpeg to reduce CPU usage
+        # Set to True to reduce CPU usage by applying an additional FFmpeg limit.
         "ffmpeg_limit": False,
-        # Tonemap HDR - DV+HDR screenshots
-        "tone_map": True,
-        # Set false to disable libplacebo ffmpeg tonemapping and use ffmpeg only
-        # This is a good toggle if you have any ffmpeg related issues when tonemapping, especially on seedboxes
-        "use_libplacebo": True,
-        # Set true to skip ffmpeg check, useful if you know your ffmpeg is compatible with libplacebo
-        # Else, when tonemapping is enabled (and used), UA will run a quick check before to decide
-        "ffmpeg_is_good": False,
-        # Set true to skip "warming up" libplacebo
-        # Some systems are slow to compile libplacebo shaders, which will cause the first screenshot to fail
-        "ffmpeg_warmup": False,
-        # Set ffmpeg compression level for screenshots (0-9)
-        # 6 is a good balance between compression and speed
+        # FFmpeg compression level for screenshots (0-9).
+        # A value of 6 provides a good balance between compression and speed.
         "ffmpeg_compression": "6",
         # Optional paths to external media tools. Leave blank to use the bundled
         # tool (when available) or the system PATH. MediaInfo DVD must remain
@@ -304,64 +305,112 @@ config: dict[str, Any] = {
         # Tonemap screenshots with the following settings (doesn't apply when using libplacebo)
         # See https://ayosec.github.io/ffmpeg-filters-docs/7.1/Filters/Video/tonemap.html
         "algorithm": "mobius",
-        # Apply desaturation for highlights that exceed this level of brightness. The higher the parameter, the more color information will be preserved. This setting helps prevent unnaturally blown-out colors for super-highlights, by (smoothly) turning into white instead. This makes images feel more natural, at the cost of reducing information about out-of-range colors.
-        # The default of 2.0 is somewhat conservative and will mostly just apply to skies or directly sunlit surfaces. A setting of 0.0 disables this option.
-        # This option works only if the input frame has a supported color tag.
+        # Control desaturation of overly bright highlights when libplacebo is disabled.
+        # Higher values preserve more color; lower values fade highlights toward white.
+        # Set to 0.0 to disable. FFmpeg defaults to 2.0; this example uses 10.0.
+        # Works only when the input frame has a supported color tag.
         "desat": "10.0",
-        # DESCRIPTION SETTINGS
-        # Detailed documentation on how description layout settings work and affect description building:
+        # Screenshot overlays
+        # Layout examples and manual setup: docs/screenshot-overlays.md
+        # Show enabled screenshot labels without changing the individual selections below.
+        # Enable at least one label below to display overlay text.
+        # Enabling overlays uses FFmpeg tone mapping instead of libplacebo.
+        "frame_overlay": False,
+        # Overlay text size (1-100), scaled with resolution. VapourSynth rounds to whole font-scale steps.
+        "overlay_text_size": "18",
+        # Keep labels at the top, aligned to "left" or "right".
+        "overlay_position": "left",
+        # Use "stacked" for one label per line, or "single_line" for compact labels separated by bullets.
+        "overlay_layout": "stacked",
+        # Show the estimated frame number at the capture position.
+        "overlay_frame_number": False,
+        # Show the frame's picture type (I, P, or B).
+        "overlay_frame_type": False,
+        # Show the captured frame's elapsed video time (HH:MM:SS.mmm).
+        "overlay_timestamp": False,
+        # Show only when screenshots have been tonemapped to SDR.
+        "overlay_tonemapped": False,
+        # --- DISC MENU SCREENSHOTS ---
+        # Set to True to capture DVD menu screenshots from menu VOBs.
+        "auto_dvd_menus": True,
+        # Maximum number of disc menu screenshots to upload.
+        "max_menu_screens": "6",
+        # --- XXX CONTACT SHEETS ---
+        # XXX releases generate one contact sheet per video instead of individual frames.
+        # Rows are vertical and columns are horizontal: 12 x 5 produces 60 thumbnails.
+        "xxx_contact_sheet_rows": "12",
+        "xxx_contact_sheet_columns": "5",
+        # Maximum number of video files for which to generate XXX contact sheets.
+        "xxx_contact_sheet_max_videos": "6",
+        # Set to True to create XXX contact sheets as animated WebP files instead of PNG.
+        "xxx_contact_sheet_animated_webp": False,
+        # Animation duration in seconds.
+        "xxx_contact_sheet_animation_seconds": "5",
+        # Add this many normal screenshots to the contact sheet for a single-video XXX release.
+        "xxx_single_file_screens": "0",
+        # --- GENERAL DESCRIPTION SETTINGS ---
+        # See detailed documentation on how these settings affect description building:
         # https://github.com/wastaken7/Upload-Assistant/blob/development/docs/description-builder.md
-        # Whether to add a logo for the show/movie from TMDB to the top of the description
+        # Add a TMDB show or movie logo to the top of the description.
         "add_logo": True,
-        # Logo image size
+        # Logo width in pixels.
         "logo_size": "300",
-        # logo language (ISO 639-1) - default is 'en' (English)
-        # If a logo with this language cannot be found, English will be used instead
+        # Preferred logo language (ISO 639-1). Defaults to English ("en").
+        # Falls back to English when a logo in the preferred language is unavailable.
         "logo_language": "",
-        # Providing the option to change the size of the screenshot thumbnails where supported.
-        # Default is 350, ie [img=350]
+        # Audible marketplace used to link ASINs in descriptions. Leave empty
+        # unless you set your marketplace explicitly.
+        # Examples: audible.com, audible.co.uk, audible.com.br.
+        # --audible-url overrides this value for an individual upload. Audiobook
+        # catalog lookup requires this domain (or --audible-url) and an ASIN.
+        "audible_domain": "",
+        # Screenshot thumbnail width where supported. Default: 350 (for example, [img=350]).
         "thumbnail_size": "350",
-        # Number of screenshots per row in the description. Default is single row.
-        # Only for sites that use common description
+        # Number of screenshots per row on sites that use the common description.
+        # Leave blank to use the default of 2.
         "screens_per_row": "",
-        # set true to add episode overview to description
+        # Set to True to add the episode overview to the description.
         "episode_overview": True,
-        # Add this header above screenshots in description when screens have been tonemapped (in bbcode)
-        # Can be overridden in a per-tracker setting by adding this same config
-        "tonemapped_header": "[center]Screenshots have been adapted for SDR viewing, for reference only.[/center]",
-        # Number of screenshots to use for each (ALL) disc/episode when uploading packs to supported sites.
-        # 0 equals old behavior where only the original description and images are added.
-        # This setting also affects PASSTHEPOPCORN, however PASSTHEPOPCORN requires at least 2 images for each.
-        # PASSTHEPOPCORN will always use a *minimum* of 2, regardless of what is set here.
+        # --- PACK DESCRIPTIONS ---
+        # Number of screenshots to use for each disc or episode in packs on supported sites.
+        # Set to 0 to use only the original description and images for later items.
+        # PassThePopcorn always uses at least 2 images per item, regardless of this value.
         "multiScreens": "2",
-        # The next options for packed content do not effect PASSTHEPOPCORN. PASSTHEPOPCORN has a set standard.
-        # When uploading packs, you can specify a different screenshot thumbnail size, default 300.
+        # The following pack settings do not affect PassThePopcorn, which uses a fixed format.
+        # Screenshot thumbnail width for pack descriptions. Default: 300.
         "pack_thumb_size": "300",
-        # Description character count (including bbcode) cutoff for UNIT3D sites when **season packs only**.
-        # After hitting this limit, only filenames and screenshots will be used for any ADDITIONAL files
-        # still to be added to the description. You can set this small like 50, to only ever
-        # print filenames and screenshots for each file, no mediainfo will be printed.
-        # UNIT3D sites have a hard character limit for descriptions. A little over 17000
-        # worked fine in a forum post at AITHER. If the description is at 1 < charLimit, the next full
-        # description will be added before respecting this cutoff.
+        # Description character-count cutoff (including BBCode) for UNIT3D season packs.
+        # After reaching this limit, only filenames and screenshots are used for any
+        # additional files still to be added. Set a small value, such as 50, to include
+        # only filenames and screenshots for each file, without MediaInfo.
+        # UNIT3D sites enforce hard description limits. A little over 17,000 characters
+        # worked in an AITHER forum post. If the current character count is below
+        # charLimit, the next full MediaInfo block is added before the cutoff is applied.
         "charLimit": "14000",
-        # How many files in a season pack will be added to the description before using an additional spoiler tag.
-        # Any other files past this limit will be hidden/added all within a spoiler tag.
+        # How many files in a season pack are added before using an additional spoiler tag.
+        # Files past this limit are grouped within the additional spoiler tag.
         "fileLimit": "2",
-        # Absolute limit on processed files in packs.
-        # You might not want to process screens/mediainfo for 40 episodes in a season pack.
+        # Maximum number of files processed for screenshots and MediaInfo in a pack.
+        # You may not want to process screenshots and MediaInfo for 40 episodes in a season pack.
         "processLimit": "10",
-        # Providing the option to add a description header, in bbcode, at the top of the description section where supported
-        # Can be overridden in a per-tracker setting by adding this same config
+        # --- DESCRIPTION HEADERS AND OVERRIDES ---
+        # Header added to the top of the description where supported.
+        # Can be overridden per tracker by adding the same setting to its configuration.
         "custom_description_header": "",
-        # Providing the option to add a header, in bbcode, above the screenshot section where supported
-        # Can be overridden in a per-tracker setting by adding this same config
+        # Header added above the screenshot section where supported.
+        # Can be overridden per tracker by adding the same setting to its configuration.
         "screenshot_header": "[h2]Screenshots[/h2]",
+        # Hide a lone generated image-section header; logos, text and signatures do not count.
+        # Set to False to always keep image-section headers.
+        "hide_screenshot_header_if_only_section": True,
+        # Header added above screenshots after HDR tone mapping.
+        # Can be overridden per tracker by adding the same setting to its configuration.
+        "tonemapped_header": "[center]Screenshots have been adapted for SDR viewing, for reference only.[/center]",
         # Applicable only to raw discs (Blu-ray/DVD).
-        # Providing the option to add a header, in bbcode, above the section featuring screenshots of the Disc menus, where supported
-        # Can be overridden in a per-tracker setting by adding this same config
+        # Header added above disc menu screenshots where supported.
+        # Can be overridden per tracker by adding the same setting to its configuration.
         "disc_menu_header": "[h2]Disc Menu Screenshots[/h2]",
-        # Header to add above the audio spectrograms
+        # Header added above audio spectrograms.
         "audio_spectrogram_header": "[h2]Audio Spectrogram[/h2]",
         # Header to add above Dolby Vision/HDR10+ metadata plots.
         "dynamic_hdr_plot_header": "[h2]Dynamic HDR Metadata[/h2]",
@@ -385,12 +434,11 @@ config: dict[str, Any] = {
         # Add bluray.com link to description
         # Requires "get_bluray_info" to be set to True
         "add_bluray_link": True,
-        # Add cover/back/slip images from bluray.com to description if available
-        # Requires "get_bluray_info" to be set to True
+        # Set to True to add available Blu-ray.com cover, back, and slip images.
+        # Requires "get_bluray_info" to be set to True.
         "use_bluray_images": True,
-        # Size of bluray.com cover images.
-        # bbcode is width limited, cover images are mostly height dominant
-        # So you probably want a smaller size than screenshots for instance
+        # Width of Blu-ray.com cover images in pixels. BBCode limits image width, and
+        # covers are usually taller than screenshots, so a smaller value is preferable.
         "bluray_image_size": "250",
         # Set true to add audio spectrograms to the description
         "add_audio_spectrogram": True,
@@ -402,9 +450,7 @@ config: dict[str, Any] = {
         "process_all_audio_spectrogram": False,
         # Seconds from the beginning of each selected stream to analyse.
         "audio_spectrogram_duration": 600,
-        # Decode at this sample rate (48 kHz retains frequencies up to 24 kHz).
-        "audio_spectrogram_sample_rate": 48000,
-        # For MUSIC and audiobooks, limit the number of tracks/chapters processed.
+        # For music and audiobooks, limit the number of tracks or chapters processed.
         "audio_spectrogram_max_files": 12,
         # Limit plots generated for multi-file releases.
         "dynamic_hdr_plot_max_files": 1,
@@ -452,9 +498,9 @@ config: dict[str, Any] = {
         # TORRENT CREATION
         # set true to use mkbrr for torrent creation
         "mkbrr": True,
-        # Create using a specific number of worker threads for hashing (e.g., 8) with mkbrr
-        # Experimenting with different values might yield better performance than the default automatic setting.
-        # Conversely, you can set a lower amount such as 1 to protect system resources (default "0" (auto))
+        # Number of mkbrr worker threads used for hashing (for example, 8).
+        # Different values may improve performance. Use a lower value, such as 1, to reduce resource usage.
+        # Set to 0 to choose the thread count automatically.
         "mkbrr_threads": "0",
         # Set true to prefer torrents with piece size <= 16 MiB when searching for existing torrents in clients
         "prefer_max_16_torrent": False,
@@ -462,31 +508,62 @@ config: dict[str, Any] = {
         # For trackers that might need specific piece size rehashing, using a value higher than 0 will add the specified cooldown
         # in (seconds) before rehashing begins, to allow other tasks to complete quickly, before resources are consumed by rehashing
         "rehash_cooldown": "0",
-        # POST UPLOAD
-        # Delay (in seconds) before injecting the torrent to allow the tracker to register the hash and avoid 'unregistered torrent' errors.
-        # Can be overridden in a per-tracker setting by adding this same config
-        "inject_delay": 0,
-        # Whether or not to print how long the upload process took for each tracker
-        # Useful for knowing which trackers are slowing down the overall upload process
+        # --- TRACKER CHECKS AND UPLOAD ---
+        # Minimum number of trackers that must pass banned-group, content, and duplicate checks before uploading continues.
+        # Default: 1. Upload Assistant exits if fewer trackers pass.
+        "tracker_pass_checks": 1,
+        # Set to True to show the size difference between a duplicate and the upload during duplicate checks.
+        "show_dupe_size_diff": True,
+        # Ignore duplicates when their size differs from the upload by at least this percentage.
+        # For example, 20 excludes a duplicate that is at least 20% larger or smaller.
+        # Set to None or remove this setting to disable the feature.
+        "dupe_size_difference_tolerance": None,
+        # Check MOVIE and TV duplicates against each tracker's slot rules, where Upload Assistant has them.
+        # Shows a recommendation (upload / don't upload / review) with the date of the rules it is based on.
+        # In unattended mode the recommendation decides whether to upload; when it can't decide, the basic check is used.
+        # Default: True (also when this setting is missing).
+        "slot_rules": True,
+        # See docs/upload-order-and-bandwidth-control.md for workflows and qBittorrent requirements.
+        "upload_order": "concurrent",
+        "qbit_bandwidth_control": False,
+        "qbit_bandwidth_control_after_usenet": False,
+        "qbit_bandwidth_threshold": 0,
+        "qbit_bandwidth_time": 0,
+        # Minimum time between uploads when processing several releases in one run, such as a --queue.
+        # Use seconds or a value such as "90s", "30m" or "1h30m". 0 disables it. --upload-interval overrides it.
+        # The next release is prepared during the wait, and each tracker repeats its duplicate check before uploading.
+        "upload_interval": 0,
+        # Number of retry attempts after network or server errors, such as HTTP 500 responses or timeouts.
+        # Can be overridden per tracker by adding the same setting to its configuration.
+        "max_retries": 3,
+        # Set to True to print how long each tracker upload takes.
+        # This can help identify trackers that slow down the overall upload process.
         "show_upload_duration": True,
-        # Set true to print the tracker api messages from uploads
+        # Set to True to print tracker API messages returned during uploads.
         "print_tracker_messages": False,
-        # Whether or not to print direct torrent links for the uploaded content
+        # Set to True to print direct torrent links for uploaded content.
         "print_tracker_links": True,
-        # Set true to search for matching requests on supported trackers
-        "search_requests": True,
-        # Set false to disable adding cross-seed suitable torrents found during existing search (dupe) checking
+        # --- POST-UPLOAD ---
+        # Delay, in seconds, before injecting the torrent. This allows the tracker to register the hash and avoid "unregistered torrent" errors.
+        # Can be overridden per tracker by adding the same setting to its configuration.
+        "inject_delay": 0,
+        # Set to False to disable adding cross-seed-suitable torrents found during duplicate checks.
         "cross_seeding": True,
-        # Set true to cross-seed check every valid tracker defined in your config
-        # regardless of whether the tracker was selected for upload or not (needs cross-seeding above to be True)
+        # Set to True to check every valid configured tracker for cross-seeding, even when not selected for upload.
+        # Requires "cross_seeding" to be set to True.
         "cross_seed_check_everything": False,
-        # Use MusicBrainz only as corroborating metadata. Local file tags remain
-        # authoritative and no external lookup is made unless this is enabled.
-        "music_enrichment_enabled": False,
-        # Optional Discogs personal access token. Automatic or supplied Discogs
-        # lookups are bounded and read-only; this token raises Discogs API
-        # limits but is never written to release metadata or logs.
-        "music_discogs_token": "",
+        # Set to True to search for matching requests on supported trackers.
+        "search_requests": True,
+        # Optional trusted scripts from STATE_DIR/custom_hooks/ (Docker: /state/custom_hooks/) run after each item's tracker uploads and request search.
+        # Scripts receive final metadata as JSON through stdin and may write status lines to the terminal.
+        # Example: ["notify.py"]
+        "post_upload_hooks": [],
+        # Trusted hooks loaded into Upload Assistant's process. Each must expose an async or sync on_upload_finished(meta, config) function.
+        # Each hook receives deep copies of the metadata and configuration.
+        "post_upload_inprocess_hooks": [],
+        # Maximum time, in seconds, allowed for each subprocess post-upload script.
+        # Invalid or zero values use 30 seconds. A failed hook never changes the upload result.
+        "post_upload_hook_timeout": 30,
     },
     # these are used for DB links on ALPHARATIO
     "IMAGES": {
@@ -506,15 +583,68 @@ config: dict[str, Any] = {
         # CINEMATIK, MAKINGOFF, ORPHEUS, TORRENTLEECH, THELEACHZONE, THEOLDSCHOOL, TOTHEGLORY, TORRENTEROS, TVCHAOSUK, ULCX, UNWALLED, UTOPIA, XINGYUNGEPT, YUSCENE, ZENITH
         # Only add the trackers you want to upload to on a regular basis
         "default_trackers": "",
+        "1PTBA": {
+            # Alias used to select this tracker with -tk/--trackers; case-insensitive.
+            "cli_alias": "1PT",
+            # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
+            "link_dir_name": "",
+            # Cookies required (export from https://1ptba.com/ to data/cookies/1PTBA.txt).
+            # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
+            "announce_url": "",
+            "anon": True,
+            # The configurations below override the DEFAULT configuration
+            "add_logo": True,
+            "logo_size": "",
+            "thumbnail_size": "",
+            "screens_per_row": "",
+            "episode_overview": True,
+            "multiScreens": "",
+            "pack_thumb_size": "",
+            "charLimit": "",
+            "fileLimit": "",
+            "processLimit": "",
+            "custom_description_header": "",
+            "screenshot_header": "",
+            "disc_menu_header": "",
+            "mediainfo_header": "",
+            "audio_spectrogram_header": "",
+            "custom_signature": "",
+            "user_description": "",
+            "custom_header": "",
+            "custom_footer": "",
+            "use_bluray_images": True,
+            "bluray_image_size": "",
+            "add_audio_spectrogram": True,
+            "inject_delay": 0,
+        },
         "AITHER": {
+            "cli_alias": "ATH",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Send uploads to AITHER modq for staff approval
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Double upload duration in days
+            "double_upload_until": 0,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Freeleech duration in days
+            "freeleech_until": 0,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as refundable
+            "refundable": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -540,6 +670,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "ALPHARATIO": {
+            "cli_alias": "AR",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # anon is not an option when uploading you need to change your privacy settings.
@@ -549,17 +680,13 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "AMIGOSSHARE": {
+            "cli_alias": "ASC",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
-            # Set uploader_status to True if you have uploader permissions to automatically approve your uploads
-            "uploader_status": False,
-            # The custom layout default is 2
-            # If you have a custom layout, you'll need to inspect the element on the upload page to find the correct layout value
-            # Don't change it unless you know what you're doing
-            "custom_layout": "2",
-            # anon is not an option when uploading to AMIGOSSHARE
-            # Cookies required (export from https://cliente.amigos-share.club/ to data/cookies/AMIGOSSHARE.txt).
+            # Cookies required (export from https://amigos-share.club to data/cookies/AMIGOSSHARE.txt).
             # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
+            # The torrent is downloaded from the site after the upload; the announce URL (with your passkey) is
+            # used for the private torrent that is sent, and is seeded if that download fails.
             "announce_url": "",
             # Set this to True if you want to allow external subtitles to be included in the upload
             "allow_ext_subtitles": True,
@@ -587,11 +714,14 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "ANTHELION": {
+            "cli_alias": "ANT",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             "api_key": "",
             "announce_url": "",
             "anon": True,
+            # Number of upload retry attempts for network/server errors (e.g. 500, timeouts).
+            "max_retries": 5,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "thumbnail_size": "",
@@ -615,12 +745,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "ASIANCINEMA": {
+            "cli_alias": "ACM",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -679,6 +819,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "AVISTAZ": {
+            "cli_alias": "AZ",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://avistaz.to to data/cookies/AVISTAZ.txt).
@@ -688,12 +829,22 @@ config: dict[str, Any] = {
             # If True, the script performs a basic rules compliance check (e.g., codecs, region).
             # This does not cover all tracker rules. Set to False to disable.
             "check_for_rules": True,
+            # AvistaZ does not allow frame overlays; use cached non-overlay images or recapture them.
+            "image_tag_blacklist": ["overlay"],
             # The configurations below override the DEFAULT configuration
+            "thumbnail_size": "",
+            "screens_per_row": "",
             "episode_overview": True,
+            "custom_description_header": "",
+            "audio_spectrogram_header": "",
+            "dynamic_hdr_plot_header": "",
+            "custom_signature": "",
             "add_audio_spectrogram": True,
+            "add_dynamic_hdr_plot": True,
             "inject_delay": 0,
         },
         "BEYONDHD": {
+            "cli_alias": "BHD",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
@@ -728,6 +879,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "BITHDTV": {
+            "cli_alias": "BHDTV",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # found under https://www.bit-hdtv.com/my.php
@@ -768,12 +920,15 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "BJSHARE": {
+            "cli_alias": "BJS",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://bj-share.info to data/cookies/BJSHARE.txt).
             # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
             # Two-factor authentication (2FA) must be enabled in your profile settings; otherwise, your session cookies will expire fairly quickly.
             "announce_url": "",
+            # "use_for_search": False, set to True to import IDs and descriptions from BJ-Share torrents found in your client's torrent comments
+            "use_for_search": False,
             "anon": True,
             # Set to False if during an anonymous upload you want your release group to be hidden
             "show_group_if_anon": True,
@@ -802,12 +957,24 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "BLUTOPIA": {
+            "cli_alias": "BLU",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # Send uploads to the moderation queue for staff review and approval
+            "modq": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -833,6 +1000,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "BRASILTRACKER": {
+            "cli_alias": "BT",
             "link_dir_name": "",
             # Cookies required (export from https://brasiltracker.org/ to data/cookies/BRASILTRACKER.txt).
             # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
@@ -858,17 +1026,44 @@ config: dict[str, Any] = {
             "bluray_image_size": "",
             "inject_delay": 0,
         },
+        "BROADCASTHENET": {
+            "cli_alias": "BTN",
+            # BTN accepts TV only. An API key is required for dupe searching and
+            # resolving uploads that return a group page. Upload authentication
+            # uses browser-exported cookies in data/cookies/BROADCASTHENET.txt.
+            "link_dir_name": "",
+            "use_for_search": False,
+            "api_key": "",
+            # Optional. When set, replaces the announce URL in the torrent downloaded from BTN
+            # after upload (e.g. https://landof.tv/<passkey>/announce). Leave empty to keep BTN's.
+            "announce_url": "",
+            # Optional override for BTN's JSON-RPC endpoint.
+            "api_url": "https://api.broadcasthe.net/",
+            "inject_delay": 0,
+        },
         "CAPYBARABR": {
+            "cli_alias": "CBR",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Send uploads to CAPYBARABR modq for staff approval
+            # BiOMA Zipline API key/token for rehosting screenshots when uploading releases with tag 'BiOMA' (Host: https://img.thebioma.space/)
+            "bioma_api_key": "",
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
             # Set this to True if you want to allow external subtitles to be included in the upload
             "allow_ext_subtitles": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -894,18 +1089,29 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "CATHODERAYTUBE": {
+            "cli_alias": "CRT",
             # Cookies required (export from https://www.cathode-ray.tube/ to data/cookies/CATHODERAYTUBE.txt).
             # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
             "announce_url": "",
             "anon": True,
         },
         "CINEMATIK": {
+            "cli_alias": "TIK",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -931,6 +1137,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "CINEMAZ": {
+            "cli_alias": "CZ",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://cinemaz.to to data/cookies/CINEMAZ.txt).
@@ -940,28 +1147,58 @@ config: dict[str, Any] = {
             # If True, the script performs a basic rules compliance check (e.g., codecs, region).
             # This does not cover all tracker rules. Set to False to disable.
             "check_for_rules": True,
+            # CinemaZ does not allow frame overlays.
+            "image_tag_blacklist": ["overlay"],
             # The configurations below override the DEFAULT configuration
+            "thumbnail_size": "",
+            "screens_per_row": "",
             "episode_overview": True,
+            "custom_description_header": "",
+            "audio_spectrogram_header": "",
+            "dynamic_hdr_plot_header": "",
+            "custom_signature": "",
             "add_audio_spectrogram": True,
+            "add_dynamic_hdr_plot": True,
             "inject_delay": 0,
         },
         "CURUPIRA": {
+            "cli_alias": "CRP",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Your API Key, obtained from Perfil -> API Key
             "api_key": "",
             "anon": True,
+            # Only block uploads when the existing release exactly matches files.
+            "exact_match_only": False,
             "inject_delay": 0,
         },
+        "CZTEAM": {
+            "cli_alias": "CZT",
+            # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
+            "link_dir_name": "",
+            # Your site username and passkey, shown at https://czteam.me/my.php
+            "username": "",
+            "passkey": "",
+        },
         "DARKPEERS": {
+            "cli_alias": "DP",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Send uploads to DARKPEERS modq for staff approval
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -988,12 +1225,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "DESITORRENTS": {
+            "cli_alias": "DT",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1019,11 +1266,14 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "DIGITALCORE": {
+            "cli_alias": "DC",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # You can find your api key at Settings -> Security -> API Key -> Generate API Key
             "api_key": "",
             "anon": True,
+            # Force DigitalCore uploads to re-host screenshots on img.digitalcore.club using DEFAULT.sharex_api_key.
+            "force_rehost_images": False,
             # If True, the script will use the metadata-based title instead of the directory/file name.
             "use_metadata_name": False,
             # The configurations below override the DEFAULT configuration
@@ -1049,25 +1299,33 @@ config: dict[str, Any] = {
             "add_audio_spectrogram": True,
             "inject_delay": 0,
         },
-        "DRUNKENSLUG": {
+        "DIRTYBYTES": {
+            "cli_alias": "DB",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
-            # Provide the DRUNKENSLUG API key here, can be found at https://drunkenslug.com/profile
+            # Generate your API key at Settings -> API key
             "api_key": "",
-            # Maximum number of API hits the script may make within 24 hours for duplicate search.
-            # Set to 0 to disable duplicate search via API.
-            "daily_api_hit_limit": 0,
-            "inject_delay": 0,
+            "anon": True,
         },
-        "EMUWAREZ": {
+        "DREADVAULT": {
+            "cli_alias": "DVL",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Use Spanish title instead of English title, if available
-            "use_spanish_title": False,
+            # Only block uploads when the existing release exactly matches files and size.
+            "exact_match_only": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1092,7 +1350,95 @@ config: dict[str, Any] = {
             "add_audio_spectrogram": True,
             "inject_delay": 0,
         },
+        "DRUNKENSLUG": {
+            "cli_alias": "DS",
+            # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
+            "link_dir_name": "",
+            # Provide the DRUNKENSLUG API key here, can be found at https://drunkenslug.com/profile
+            "api_key": "",
+            # Maximum number of API hits the script may make within 24 hours for duplicate search.
+            # Set to 0 to disable duplicate search via API.
+            "daily_api_hit_limit": 0,
+            # Only block uploads when the existing release exactly matches files.
+            "exact_match_only": False,
+            "inject_delay": 0,
+        },
+        "EMUWAREZ": {
+            "cli_alias": "EMUW",
+            # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
+            "link_dir_name": "",
+            # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
+            "use_for_search": False,
+            "api_key": "",
+            "anon": True,
+            # Use Spanish title instead of English title, if available
+            "use_spanish_title": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
+            # The configurations below override the DEFAULT configuration
+            "add_logo": True,
+            "logo_size": "",
+            "thumbnail_size": "",
+            "screens_per_row": "",
+            "episode_overview": True,
+            "tonemapped_header": "[note]Screenshots have been adapted for SDR viewing, for reference only.[/note]",
+            "multiScreens": "",
+            "pack_thumb_size": "",
+            "charLimit": "",
+            "fileLimit": "",
+            "processLimit": "",
+            "custom_description_header": "",
+            "screenshot_header": "[h2]Screenshots[/h2]",
+            "disc_menu_header": "[h2]Disc Menu Screenshots[/h2]",
+            "audio_spectrogram_header": "[h2]Audio Spectrogram[/h2]",
+            "dynamic_hdr_plot_header": "[h2]Dynamic HDR Metadata[/h2]",
+            "custom_signature": "",
+            "add_bluray_link": True,
+            "use_bluray_images": True,
+            "bluray_image_size": "",
+            "add_audio_spectrogram": True,
+            "inject_delay": 0,
+        },
+        "EXOTICAZ": {
+            "cli_alias": "EXZ",
+            # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
+            "link_dir_name": "",
+            # Cookies required (export from https://exoticaz.to to data/cookies/EXOTICAZ.txt).
+            # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
+            # Uploads are published with the torrent file downloaded from the site, which carries your passkey.
+            "anon": True,
+            # If True, the script performs a basic rules compliance check (e.g., file types, size, video sheets).
+            # This does not cover all tracker rules. Set to False to disable.
+            "check_for_rules": True,
+            # ExoticaZ requires a video sheet per video and, for single clips, a full size screenshot.
+            # Set DEFAULT "xxx_single_file_screens" to at least 1 when uploading single clips.
+            # The configurations below override the DEFAULT configuration
+            "custom_description_header": "",
+            "custom_signature": "",
+            "inject_delay": 0,
+        },
+        "FILEIPLAY": {
+            "cli_alias": "FIP",
+            # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
+            "link_dir_name": "",
+            # Personal token from https://fileiplay.org/settings/api with the torrents:upload and torrents:read scopes
+            "api_key": "",
+            # Integration API key from https://fileiplay.org/integrations (Show API key), used for duplicate searches
+            # and to download the published .torrent, which carries your passkey.
+            "torznab_api_key": "",
+            "anon": True,
+            # The TMDB logo is left out of FileIPlay descriptions unless this is set to True here.
+            "add_logo": False,
+        },
         "FILELIST": {
+            "cli_alias": "FL",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             "username": "",
@@ -1101,7 +1447,16 @@ config: dict[str, Any] = {
             "anon": True,
             "inject_delay": 0,
         },
+        "FLOOD": {
+            "cli_alias": "FLD",
+            # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
+            "link_dir_name": "",
+            "api_key": "",
+            "announce_url": "https://flood.st/announce/Custom_Announce_URL",
+            "anon": True,
+        },
         "FUNFILE": {
+            "cli_alias": "FF",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             "username": "",
@@ -1135,6 +1490,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "GREATPOSTERWALL": {
+            "cli_alias": "GPW",
             "link_dir_name": "",
             # You can find your API key in Profile Settings -> Access Settings -> API Key. If there is no API, click "Reset your api key" and Save Profile.
             "api_key": "",
@@ -1166,7 +1522,17 @@ config: dict[str, Any] = {
             "add_audio_spectrogram": True,
             "inject_delay": 0,
         },
+        "HAPPYFAPPY": {
+            "cli_alias": "HF",
+            # Cookies required (export from https://www.happyfappy.net/ to data/cookies/HAPPYFAPPY.txt).
+            # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
+            # Your personal announce URL is shown at https://www.happyfappy.net/upload.php
+            # Images must be on pixhost, imgbox or imagebam; set one of them as an img_host_N.
+            "announce_url": "",
+            "anon": True,
+        },
         "HAWKEUNO": {
+            "cli_alias": "HUNO",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             "use_for_search": False,
@@ -1174,6 +1540,15 @@ config: dict[str, Any] = {
             # You can find your announce URL at https://hawke.uno/upload
             "announce_url": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1199,6 +1574,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "HDBITS": {
+            "cli_alias": "HDB",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
@@ -1213,6 +1589,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "HDSPACE": {
+            "cli_alias": "HDS",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://hd-space.org/ to data/cookies/HDSPACE.txt).
@@ -1244,6 +1621,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "HDTORRENTS": {
+            "cli_alias": "HDT",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export to data/cookies/HDTORRENTS.txt).
@@ -1283,10 +1661,20 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "HOMIEHELPDESK": {
+            "cli_alias": "HHD",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1312,6 +1700,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "IMMORTALSEED": {
+            "cli_alias": "IS",
             # Cookies required (export from https://immortalseed.me/ to data/cookies/IMMORTALSEED.txt).
             # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
@@ -1344,12 +1733,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "INFINITYHD": {
+            "cli_alias": "IHD",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1375,6 +1774,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "IPTORRENTS": {
+            "cli_alias": "IPT",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export to data/cookies/IPTORRENTS.txt).
@@ -1411,12 +1811,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "ITATORRENTS": {
+            "cli_alias": "ITT",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1474,6 +1884,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "LAJIDUI": {
+            "cli_alias": "LAJIDUI",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://pt.lajidui.top/ to data/cookies/LAJIDUI.txt).
@@ -1504,12 +1915,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "LASTDIGITALUNDERGROUND": {
+            "cli_alias": "LDU",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1535,14 +1956,24 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "LATTEAM": {
+            "cli_alias": "LT",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Send uploads to LATTEAM modq for staff approval
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1599,6 +2030,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "LOCADORA": {
+            "cli_alias": "LCD",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
@@ -1607,6 +2039,15 @@ config: dict[str, Any] = {
             "anon": True,
             # Set this to True if you want to allow external subtitles to be included in the upload
             "allow_ext_subtitles": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1632,6 +2073,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "LONGPT": {
+            "cli_alias": "LPT",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://longpt.org/ to data/cookies/LONGPT.txt).
@@ -1662,16 +2104,26 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "LST": {
+            "cli_alias": "LST",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Send uploads to LST modq for staff approval
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
             # Send uploads to LST drafts
             "draft": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1697,14 +2149,24 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "LUMINARR": {
+            "cli_alias": "LUME",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Send uploads to LUMINARR modq for staff approval
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1730,6 +2192,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "MAKINGOFF": {
+            "cli_alias": "MKO",
             # Cookies required (export from https://www.makingoff.org/ to data/cookies/MAKINGOFF.txt).
             # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
@@ -1742,14 +2205,24 @@ config: dict[str, Any] = {
             "allow_ext_subtitles": True,
         },
         "MIDNIGHTSCENE": {
+            "cli_alias": "MS",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Send uploads to MIDNIGHTSCENE modq for staff approval
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1775,6 +2248,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "MTEAM": {
+            "cli_alias": "MTEAM",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             "api_key": "",
@@ -1804,6 +2278,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "NEBULANCE": {
+            "cli_alias": "NBL",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             "api_key": "",
@@ -1811,12 +2286,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "NORDICQUALITY": {
+            "cli_alias": "NQ",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1849,14 +2334,24 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "OLDTOONSWORLD": {
+            "cli_alias": "OTW",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
-            # Send uploads to OLDTOONSWORLD modq for staff approval
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1882,21 +2377,33 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "ONLYENCODES": {
+            "cli_alias": "OE",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
-            "add_logo": True,
+            # OnlyEncodes forbids description logos and requires linked medium screenshots
+            # from the first episode/movie rather than screenshots for every pack item.
+            "add_logo": False,
             "logo_size": "",
-            "thumbnail_size": "",
+            "thumbnail_size": 350,
             "screens_per_row": "",
             "episode_overview": True,
             "tonemapped_header": "[note]Screenshots have been adapted for SDR viewing, for reference only.[/note]",
-            "multiScreens": "",
-            "pack_thumb_size": "",
+            "multiScreens": 0,
+            "pack_thumb_size": 350,
             "charLimit": "",
             "fileLimit": "",
             "processLimit": "",
@@ -1913,6 +2420,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "ORPHEUS": {
+            "cli_alias": "OPS",
             # Orpheus Gazelle API token. Do not commit a real token.
             "api_key": "",
             # Obtain from https://orpheus.network/upload.php
@@ -1952,6 +2460,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "PASSTHEPOPCORN": {
+            "cli_alias": "PTP",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
@@ -1965,14 +2474,26 @@ config: dict[str, Any] = {
             "inject_delay": 5,
         },
         "PEERGARDEN": {
+            "cli_alias": "PG",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Send uploads to PEERGARDEN modq for staff approval
+            # Only block uploads when the existing release exactly matches files and size.
+            "exact_match_only": True,
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -1998,12 +2519,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "POLISHTORRENT": {
+            "cli_alias": "PTT",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2029,12 +2560,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "PORTUGAS": {
+            "cli_alias": "PT",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2060,6 +2601,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "PRIVATEHD": {
+            "cli_alias": "PHD",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://privatehd.to/ to data/cookies/PRIVATEHD.txt).
@@ -2069,12 +2611,22 @@ config: dict[str, Any] = {
             # If True, the script performs a basic rules compliance check (e.g., codecs, region).
             # This does not cover all tracker rules. Set to False to disable.
             "check_for_rules": True,
+            # PrivateHD does not allow frame overlays.
+            "image_tag_blacklist": ["overlay"],
             # The configurations below override the DEFAULT configuration
+            "thumbnail_size": "",
+            "screens_per_row": "",
             "episode_overview": True,
+            "custom_description_header": "",
+            "audio_spectrogram_header": "",
+            "dynamic_hdr_plot_header": "",
+            "custom_signature": "",
             "add_audio_spectrogram": True,
+            "add_dynamic_hdr_plot": True,
             "inject_delay": 0,
         },
         "PTCAFE": {
+            "cli_alias": "PTCAFE",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://ptcafe.club/ to data/cookies/PTCAFE.txt).
@@ -2104,7 +2656,9 @@ config: dict[str, Any] = {
             "add_audio_spectrogram": True,
             "inject_delay": 0,
         },
-        "PTERCLUB": {  # Does not appear to be working at all
+        # PTERCLUB support is currently experimental and may not work reliably.
+        "PTERCLUB": {
+            "cli_alias": "PTER",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             "passkey": "passkey",
@@ -2116,6 +2670,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "PTFANS": {
+            "cli_alias": "PTFANS",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://ptfans.cc/ to data/cookies/PTFANS.txt).
@@ -2146,6 +2701,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "PTGTK": {
+            "cli_alias": "PTGTK",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://pt.gtkpw.xyz to data/cookies/PTGTK.txt).
@@ -2176,6 +2732,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "PTSKIT": {
+            "cli_alias": "PTS",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://www.ptskit.org to data/cookies/PTSKIT.txt).
@@ -2204,7 +2761,74 @@ config: dict[str, Any] = {
             "add_audio_spectrogram": True,
             "inject_delay": 0,
         },
+        "PTZONE": {
+            "cli_alias": "PTZ",
+            # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
+            "link_dir_name": "",
+            # Cookies required (export from https://ptzone.xyz/ to data/cookies/PTZONE.txt).
+            # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
+            "announce_url": "",
+            "anon": True,
+            # The configurations below override the DEFAULT configuration
+            "add_logo": True,
+            "logo_size": "",
+            "thumbnail_size": "",
+            "screens_per_row": "",
+            "episode_overview": True,
+            "multiScreens": "",
+            "pack_thumb_size": "",
+            "charLimit": "",
+            "fileLimit": "",
+            "processLimit": "",
+            "custom_description_header": "",
+            "screenshot_header": "",
+            "disc_menu_header": "",
+            "mediainfo_header": "",
+            "audio_spectrogram_header": "",
+            "custom_signature": "",
+            "user_description": "",
+            "custom_header": "",
+            "custom_footer": "",
+            "use_bluray_images": True,
+            "bluray_image_size": "",
+            "add_audio_spectrogram": True,
+            "inject_delay": 0,
+        },
+        "QINGWA": {
+            "cli_alias": "QW",
+            # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
+            "link_dir_name": "",
+            # Cookies required (export from https://www.qingwapt.com/ to data/cookies/QINGWA.txt).
+            # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
+            "announce_url": "",
+            "anon": True,
+            # The configurations below override the DEFAULT configuration
+            "add_logo": True,
+            "logo_size": "",
+            "thumbnail_size": "",
+            "screens_per_row": "",
+            "episode_overview": True,
+            "multiScreens": "",
+            "pack_thumb_size": "",
+            "charLimit": "",
+            "fileLimit": "",
+            "processLimit": "",
+            "custom_description_header": "",
+            "screenshot_header": "",
+            "disc_menu_header": "",
+            "mediainfo_header": "",
+            "audio_spectrogram_header": "",
+            "custom_signature": "",
+            "user_description": "",
+            "custom_header": "",
+            "custom_footer": "",
+            "use_bluray_images": True,
+            "bluray_image_size": "",
+            "add_audio_spectrogram": True,
+            "inject_delay": 0,
+        },
         "RACING4EVERYONE": {
+            "cli_alias": "R4E",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
@@ -2212,6 +2836,15 @@ config: dict[str, Any] = {
             "api_key": "",
             "announce_url": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2237,6 +2870,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "RAILGUNPT": {
+            "cli_alias": "RPT",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Cookies required (export from https://bilibili.download to data/cookies/RAILGUNPT.txt).
@@ -2267,12 +2901,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "RASTASTUGAN": {
+            "cli_alias": "RAS",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2298,12 +2942,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "REELFLIX": {
+            "cli_alias": "RF",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2329,6 +2983,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "RETROFLIX": {
+            "cli_alias": "RTF",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             "username": "",
@@ -2361,14 +3016,24 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "RETROMOVIESCLUB": {
+            "cli_alias": "RMC",
             # Instead of using the tracker name for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if you want to use Retro Movies Club for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Send uploads to Retro Movies Club modq for staff approval
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2393,15 +3058,40 @@ config: dict[str, Any] = {
             "add_audio_spectrogram": True,
             "inject_delay": 0,
         },
+        "ROCKETHD": {
+            "cli_alias": "RHD",
+            # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
+            "link_dir_name": "",
+            # "use_for_search": False, set to True if you want to use RocketHD for automatic ID searching or description parsing
+            "use_for_search": False,
+            "api_key": "",
+            "anon": True,
+            # Use German title instead of English title, if available
+            "use_german_title": False,
+        },
         "SAMARITANO": {
+            "cli_alias": "SAM",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
+            # API key for the tracker-only image host at https://img.samaritano.cc/
+            "image_host_api_key": "",
+            # Rehost this tracker's images on img.samaritano.cc. Failures keep the default image host.
+            "force_rehost_images": False,
             "anon": True,
             # Set this to True if you want to allow external subtitles to be included in the upload
             "allow_ext_subtitles": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2427,11 +3117,24 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "SEEDPOOL": {
+            "cli_alias": "SP",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
+            "anon": True,
+            # Only block uploads when the existing release exactly matches files and size.
+            "exact_match_only": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2457,6 +3160,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "SHAREISLAND": {
+            "cli_alias": "SHRI",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
@@ -2465,6 +3169,15 @@ config: dict[str, Any] = {
             "anon": True,
             # Use Italian title instead of English title, if available
             "use_italian_title": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2489,13 +3202,32 @@ config: dict[str, Any] = {
             "add_audio_spectrogram": True,
             "inject_delay": 0,
         },
+        "SIMURG": {
+            "cli_alias": "SMG",
+            # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
+            "link_dir_name": "",
+            # Simurg API token: Settings > API > API Keys. Do not commit a real token.
+            "api_key": "",
+            # Obtain from https://simurg.world/upload.php
+            "announce_url": "",
+        },
         "SKIPTHECOMMERCIALS": {
+            "cli_alias": "STC",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2521,6 +3253,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "SPEEDAPP": {
+            "cli_alias": "SPD",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # You can create an API key here https://speedapp.io/profile/api-tokens. Required Permission: Upload torrents
@@ -2553,6 +3286,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "SUIO": {
+            "cli_alias": "SUIO",
             # Secret Usenet Indexer: o[redacted]nzbs
             # Please do not share, discuss or mention this indexer's real name in issues or pull requests; nor should you ask what it is.
             # Paste the indexer's base url below (e.g., https://indexer.com)
@@ -2568,6 +3302,8 @@ config: dict[str, Any] = {
             # Set to 0 to disable duplicate search via API.
             "daily_api_hit_limit": 0,
             "anon": True,
+            # Only block uploads when the existing release exactly matches files.
+            "exact_match_only": False,
             # If False, the indexer will decide (uses ID "0").
             # If True, the script will resolve the audio language ID:
             #   - 1 language: uses the ID for that language.
@@ -2578,6 +3314,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "SWARMAZON": {
+            "cli_alias": "SN",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             "api_key": "",
@@ -2585,12 +3322,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "THELEACHZONE": {
+            "cli_alias": "TLZ",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2616,6 +3363,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "THEOLDSCHOOL": {
+            "cli_alias": "TOS",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Mon profil > Réglages > Clé API
@@ -2627,6 +3375,15 @@ config: dict[str, Any] = {
             "anon": True,
             # Upload with Exclusive flag (team of staff only)
             "exclusive": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2652,14 +3409,24 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "TORRENTEROS": {
+            "cli_alias": "TTR",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Send to modq for staff approval
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2684,7 +3451,8 @@ config: dict[str, Any] = {
             "add_audio_spectrogram": True,
             "inject_delay": 0,
         },
-        "TORRENTHR": {
+        "TORRENTHAVEN": {
+            "cli_alias": "THN",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
@@ -2715,6 +3483,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "TORRENTLEECH": {
+            "cli_alias": "TL",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # Set to False if you don't have access to the API (e.g., if you're a trial uploader). Note: this may not work sometimes due to Cloudflare restrictions.
@@ -2753,6 +3522,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "TOTHEGLORY": {
+            "cli_alias": "TTG",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             "username": "",
@@ -2765,6 +3535,7 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "TVCHAOSUK": {
+            "cli_alias": "TVC",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # 2 is listed as max images in rules. Please do not change unless you have permission
@@ -2775,14 +3546,24 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "ULCX": {
+            "cli_alias": "ULCX",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
-            # Send to modq for staff approval
+            # Send uploads to the moderation queue for staff review and approval
             "modq": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2834,12 +3615,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "UTOPIA": {
+            "cli_alias": "UTP",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2897,12 +3688,22 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "YUSCENE": {
+            "cli_alias": "YUS",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2928,12 +3729,24 @@ config: dict[str, Any] = {
             "inject_delay": 0,
         },
         "ZENITH": {
+            "cli_alias": "ZNTH",
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
             # "use_for_search": False, set to True if using this tracker for automatic ID searching or description parsing
             "use_for_search": False,
             "api_key": "",
             "anon": True,
+            # Send uploads to the moderation queue for staff review and approval
+            "modq": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as featured
+            "featured": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload with double upload credit
+            "doubleup": False,
+            # For authorized users only. Do not change this unless you know what you are doing
+            # Upload as sticky/pinned
+            "sticky": False,
             # The configurations below override the DEFAULT configuration
             "add_logo": True,
             "logo_size": "",
@@ -2941,6 +3754,7 @@ config: dict[str, Any] = {
             "screens_per_row": "",
             "episode_overview": True,
             "tonemapped_header": "[note]Screenshots have been adapted for SDR viewing, for reference only.[/note]",
+            # Ignored: Zenith does not allow extra screenshots for each episode or disc in packs.
             "multiScreens": "",
             "pack_thumb_size": "",
             "charLimit": "",
@@ -2958,7 +3772,15 @@ config: dict[str, Any] = {
             "add_audio_spectrogram": True,
             "inject_delay": 0,
         },
+        "ZMPT": {
+            "cli_alias": "ZMPT",
+            # Cookies required (export from https://zmpt.cc/ to data/cookies/ZMPT.txt).
+            # See: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/example-config.md#how-to-export-cookies
+            "announce_url": "",
+            "anon": True,
+        },
         "MANUAL": {
+            "cli_alias": "MANUAL",
             # Replace link with filebrowser (https://github.com/filebrowser/filebrowser) link to the Upload-Assistant directory, this will link to your filebrowser instead of uploading to uguu.se
             "filebrowser": "",
         },
@@ -2972,9 +3794,10 @@ config: dict[str, Any] = {
         # See https://github.com/wastaken7/Upload-Assistant/blob/development/docs/configuration.md#torrent-clients
         "qbittorrent": {
             "torrent_client": "qbit",
-            # QUI reverse proxy: https://getqui.com/docs/features/reverse-proxy
-            # Create a Client Proxy API Key in QUI (Settings → Client Proxy Keys), pick the instance, paste the full proxy URL here.
-            # Example: "http://localhost:7476/proxy/<your-client-api-key>". Bandwidth Control still requires qbit_url/qbit_port and qbit_api_key or qbit_user/qbit_pass.
+            # qui reverse proxy: https://getqui.com/docs/features/reverse-proxy
+            # Create a Client Proxy API Key in qui (Settings → Client Proxy Keys), pick the instance, paste the full proxy URL here.
+            # Example: "http://localhost:7476/proxy/<your-client-api-key>".
+            # qui is not used for bandwidth measurements; see docs/upload-order-and-bandwidth-control.md.
             "qui_proxy_url": "",
             # enable_search to True will automatically try and find a suitable hash to save having to rehash when creating torrents
             "enable_search": True,
@@ -2984,7 +3807,7 @@ config: dict[str, Any] = {
             "qbit_pass": "",
             # API Key authentication (stateless, qBittorrent v5.2.0+). When set, qbit_user and qbit_pass are ignored.
             "qbit_api_key": "",
-            # Optional qBittorrent BT_backup directory. Used together with QUI/API search;
+            # Optional qBittorrent BT_backup directory. Used together with qui/API search;
             # reading .torrent files locally can substantially speed up candidate validation.
             # Use double-backslashes on Windows, e.g. "C:\\Users\\<YOUR_USER>\\AppData\\Local\\qBittorrent\\BT_backup".
             # WARNING: this should not be used when using SQLite Mode for qBittorrent.
@@ -2998,14 +3821,17 @@ config: dict[str, Any] = {
             "use_tracker_as_tag": False,
             "qbit_tag": "",
             "qbit_cat": "",
-            # If using cross seeding, add cross seed tag/category here
+            # If using cross-seeding, add its qBittorrent tag/category here.
             "qbit_cross_tag": "",
             "qbit_cross_cat": "",
+            # qBittorrent content layout for all torrents added through this client.
+            # Use "Original", "Subfolder", or "NoSubfolder".
             "content_layout": "Original",
-            # Here you can chose to use either symbolic or hard links, or None to use original path.
+            # Choose symbolic links, hard links, or an empty value to use the original path.
             # This will disable any automatic torrent management if set.
             # use either "symlink" or "hardlink"
-            # on windows, symlinks needs admin privs, both link types need ntfs/refs filesytem (and same drive)
+            # On Windows, symbolic links may require administrator privileges. Both link types
+            # require an NTFS/ReFS filesystem, and hard links must remain on the same drive.
             "linking": "",
             # Allow fallback to inject torrent into qBitTorrent using the original path
             # when linking error. eg: unsupported file system.
@@ -3019,15 +3845,24 @@ config: dict[str, Any] = {
             # Remote path mapping (docker/etc.) CASE SENSITIVE
             "local_path": [""],
             "remote_path": [""],
+            # For a client that seeds its own copy of your files, such as a seedbox.
+            # Before adding, UA looks in this client for a complete torrent holding the same files (names and sizes)
+            # and seeds the new torrent from that torrent's folder, without path mapping or linking.
+            # "prefer": use that copy when found, otherwise use the path mapping above.
+            # "require": add the torrent to this client only when such a copy is found.
+            # Leave empty to always use the path mapping.
+            # Guide: https://github.com/wastaken7/Upload-Assistant/blob/development/docs/seeding-from-a-second-client.md
+            "match_existing_content": "",
             # Set to False to skip verify certificate for HTTPS connections; for instance, if the connection is using a self-signed certificate.
             # "VERIFY_WEBUI_CERTIFICATE": True,
         },
         "qbittorrent_searching": {
             # an example of using a qBitTorrent client just for searching, when using another client for injection
             "torrent_client": "qbit",
-            # QUI reverse proxy: https://getqui.com/docs/features/reverse-proxy
-            # Create a Client Proxy API Key in QUI (Settings → Client Proxy Keys), pick the instance, paste the full proxy URL here.
-            # Example: "http://localhost:7476/proxy/<your-client-api-key>". Bandwidth Control still requires qbit_url/qbit_port and qbit_api_key or qbit_user/qbit_pass.
+            # qui reverse proxy: https://getqui.com/docs/features/reverse-proxy
+            # Create a Client Proxy API Key in qui (Settings → Client Proxy Keys), pick the instance, paste the full proxy URL here.
+            # Example: "http://localhost:7476/proxy/<your-client-api-key>".
+            # qui is not used for bandwidth measurements; see docs/upload-order-and-bandwidth-control.md.
             "qui_proxy_url": "",
             # enable_search to True will automatically try and find a suitable hash to save having to rehash when creating torrents
             "enable_search": True,
@@ -3042,10 +3877,11 @@ config: dict[str, Any] = {
             # path/to/session folder
             "torrent_storage_dir": "",
             "rtorrent_label": "",
-            # here you can chose to use either symbolic or hard links, or None to use original path
+            # Choose symbolic links, hard links, or an empty value to use the original path.
             # this will disable any automatic torrent management if set
             # use either "symlink" or "hardlink"
-            # on windows, symlinks needs admin privs, both link types need ntfs/refs filesytem (and same drive)
+            # On Windows, symbolic links may require administrator privileges. Both link types
+            # require an NTFS/ReFS filesystem, and hard links must remain on the same drive.
             "linking": "",
             # Allow fallback to inject torrent into qBitTorrent using the original path
             # when linking error. eg: unsupported file system.
@@ -3095,8 +3931,10 @@ config: dict[str, Any] = {
         },
     },
     "USENET": {
+        # --- GENERAL SETTINGS ---
         # Set to True to enable Usenet uploading
         "enabled": False,
+        # --- SERVER CONNECTION ---
         # Usenet NNTP host, port, credentials
         "host": "",
         "port": "443",
@@ -3109,6 +3947,7 @@ config: dict[str, Any] = {
         "poster": "Uploader <upload@assistant.org>",
         # If True, poster will be randomized for anonymity/obfuscation
         "random_poster": True,
+        # --- ARCHIVING AND PARITY ---
         # Set to True to skip 7z archiving entirely and post files directly.
         # Useful with pesto, which handles obfuscation and PAR2 natively.
         "skip_archive": False,
@@ -3121,9 +3960,18 @@ config: dict[str, Any] = {
         "par2_percentage": "10",
         # Obfuscate the subject line of the NNTP post to prevent DMCA takedowns
         "obscure_subject": True,
+        # Pesto only: "light" also keeps archive filenames opaque inside the
+        # NZB; "full" hides them on NNTP but restores readable names in the NZB.
+        # Existing configs without this key retain Pesto's previous "full" mode.
+        "pesto_obfuscation_mode": "light",
+        # --- UPLOADER AND VERIFICATION ---
         # Uploader backend: "nyuu" (default) or "pesto"
         # pesto handles PAR2 and NZB password injection internally
         "usenet_uploader": "nyuu",
+        # pesto only: for TV season packs, upload each top-level episode as an
+        # independent release and also generate a consolidated season NZB.
+        # Every generated NZB is then submitted to the configured indexers.
+        "pesto_season_upload": False,
         # pesto only: a streaming STAT check that runs concurrently with the
         # upload, confirming each article shortly after it posts. Missing
         # articles are reposted and reverified automatically; the upload is
@@ -3132,9 +3980,8 @@ config: dict[str, Any] = {
         # posted" article can still be missing/unpropagated on the server,
         # producing a broken NZB.
         "pesto_check": True,
-        # Seconds to wait after EACH article posts before its first STAT check
-        # (streaming, concurrent with the upload — not a single wait at the end
-        # of the whole run) (pesto --check-delay)
+        # Seconds to wait after each article posts before its first STAT check
+        # (pesto --check-delay).
         "pesto_check_delay": 5,
         # Number of STAT attempts per article before marking it missing (pesto --check-retries)
         "pesto_check_retries": 3,
@@ -3156,11 +4003,9 @@ config: dict[str, Any] = {
         # recommended — without this, a "successfully posted" article can
         # still be missing/unpropagated on the server, producing a broken NZB.
         "nyuu_check": True,
-        # Seconds to wait after EACH article is posted before verifying that
-        # specific article (nyuu --check-delay). Unlike pesto's check_delay
-        # (a single wait after the whole upload finishes), this applies
-        # per-article, so keep it low — nyuu's own default is 5. A larger value
-        # here backs up the check queue on big uploads and can stall posting.
+        # Seconds to wait after each article posts before verifying that article
+        # (nyuu --check-delay). Keep this low; a larger value can back up the
+        # check queue on large uploads and stall posting.
         "nyuu_check_delay": 5,
         # Number of check attempts per article before marking it missing (nyuu --check-tries)
         "nyuu_check_retries": 3,
@@ -3172,6 +4017,7 @@ config: dict[str, Any] = {
         # to instead post at the full "connections" count with this many
         # additional connections dedicated to checking.
         "nyuu_check_connections": "",
+        # --- BINARY PATHS ---
         # Paths to binaries (defaults to looking in PATH, downloaded automatically if not found)
         # Available at: https://github.com/animetosho/nyuu
         "nyuu_path": "nyuu",
@@ -3181,6 +4027,7 @@ config: dict[str, Any] = {
         "pesto_path": "pesto",
         # Available at: https://www.7-zip.org/
         "7z_path": "7z",
+        # --- OUTPUT PATHS ---
         # Where to output generated NZB files (if empty, saves to tmp directory)
         "nzb_output_dir": "",
         # Temporary directory for Usenet uploads where compressed volumes are stored (if empty, saves to tmp directory)

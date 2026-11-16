@@ -21,7 +21,7 @@ class _FakeTrackerMetadataManager:
     ):
         self.calls += 1
         assert torrent_id == "12345"
-        meta.imdb_id = 1602620
+        meta.imdb_id = 9876543
         meta.description = "Cached tracker description"
         return meta, True
 
@@ -71,7 +71,7 @@ def test_explicit_tracker_id_reuses_cached_metadata(tmp_path):
         assert first_match and second_match
         assert first_fake.calls == 1
         assert second_fake.calls == 0
-        assert second_meta.imdb_id == 1602620
+        assert second_meta.imdb_id == 9876543
         assert second_meta.description == "Cached tracker description"
 
     asyncio.run(run())

@@ -31,7 +31,7 @@ def test_manual_music_category_routes_to_music_before_media_processing(
 
     asyncio.run(detect_disc_and_category(prep, meta))
 
-    assert meta.category == "MUSIC"
+    assert meta.category == "MUSIC"  # noqa: S101
 
 
 def test_manual_podcast_category_routes_before_media_processing(tmp_path):

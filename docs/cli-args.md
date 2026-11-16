@@ -2,6 +2,8 @@
 
 This document describes the command-line arguments parsed in `src/args.py`.
 
+The WebUI argument picker reads available flags and help text from that same parser. `web_ui/static/js/app.js` only defines their grouping, example placeholders, and command presets. CLI options without a dedicated group appear under **Other CLI options** automatically. CLI startup flags such as `--webui` and `--paths-from-stdin` are excluded from the picker.
+
 ## Help output
 
 - `-h` shows a short/curated help (common options only).
@@ -45,6 +47,8 @@ printf '%s\n' "/path/First.mkv" "/path/Release With Spaces (2026).mkv" | python 
 
 - `--queue QUEUE_NAME`: Process an entire folder (including files/subfolders) in a named queue.
 - `-lq`, `--limit-queue N`: Limit the amount of sucessfull uploads processed when running the queue (default `0` unlimited).
+- `--upload-at TIME`: Prepare the release, then wait until this local time to upload. Use `HH:MM` (the next occurrence, so a time already passed today means tomorrow) or `"YYYY-MM-DD HH:MM"`. Each torrent tracker repeats its duplicate check before uploading. See [scheduled uploads](upload-order-and-bandwidth-control.md#scheduled-uploads).
+- `--upload-interval DURATION`: Keep at least this much time between uploads in one run, such as a `--queue`. Accepts seconds or values such as `90s`, `30m` and `1h30m`; overrides `DEFAULT.upload_interval`.
 - `-sc`, `--site-check`: Search trackers for suitable uploads and create a log file (no uploading).
 - `-su`, `--site-upload TRACKER`: Process site searches and upload to a single tracker (the tracker identifier is normalized to uppercase).
 - `--unit3d`: Parse a text output file from `UNIT3D-Upload-Checker`.
@@ -78,6 +82,7 @@ If you pass a `.txt` file as the main positional input path (without specifying 
 ## Description inputs
 
 - `-pb`, `--desclink URL`: Custom description link (hastebin/pastebin).
+- `--description TEXT`: Inline custom description block (quote text containing spaces or BBCode).
 - `-df`, `--descfile PATH`: Custom description file path (or filename in current working directory).
   - Stored as an absolute path.
 - `-nfo`, `--nfo`: Use `.nfo` in directory for description.
@@ -111,11 +116,34 @@ If you pass a `.txt` file as the main positional input path (without specifying 
 - `-mal`, `--mal MAL_ID`: MAL id.
 - `-tvmaze`, `--tvmaze TVMAZE_ID`: TVMaze id.
 - `-tvdb`, `--tvdb TVDB_ID`: TVDB id.
+- `--tpdb ID`: ThePornDB scene or movie for an XXX release: `scenes/ID`, `movies/ID`, a ThePornDB link, or a bare scene ID. See [XXX metadata lookup](xxx-upload.md#metadata-lookup-theporndb-and-blvckout).
+- `--blvckout ID`: BLVCKOUT release ID or link for an XXX movie.
+- `--no-saved-ids`: Do not reuse the IDs confirmed for this release in an earlier run, and search for them again. See [Saved IDs and answers](web-ui.md#saved-ids-and-answers).
 
 Note: if a manual TMDb or IMDb id is present in the incoming `meta` before parsing, the parser clears `tmdb_manual`, `tmdb_id`, `tmdb`, `imdb_id`, `imdb` in `meta` so CLI values take precedence cleanly.
 
+### Book and audiobook metadata
+
+- `-asin`, `--asin ASIN`: Override the detected book or audiobook ASIN.
+- `--audible-url URL`: Use an Audible product URL, derive its ASIN, and override the configured `DEFAULT.audible_domain` marketplace for this upload.
+- `-isbn`, `--isbn ISBN`: Override the detected ISBN.
+- `-author`, `--author NAME`: Override the detected author.
+- `-btitle`, `--book-title TITLE`: Override the detected book title.
+- `--book-narrator NAME`: Override the detected audiobook narrator.
+- `--genres GENRE[,GENRE...]`: Override the detected genres for any category.
+- `-ov`, `--overview TEXT`: Override the detected overview or synopsis for any category (`--book-overview` remains an alias).
+
+### Game metadata
+
+- `--game-title TITLE`: Override the detected game title.
+- `--developer NAME`: Override the detected game developer.
+- `-pub`, `--publisher NAME`: Override the game publisher.
+
 ### Tags / edition / language
 
+- `--name RELEASE_NAME`: Override the generated release name, including XXX release titles.
+- `--cast NAME[,NAME...]`: Override cast or XXX performers with a comma-separated list. This takes priority over detected metadata.
+- `-pub`, `--publisher NAME`: Override the book/audiobook or game publisher, or XXX studio.
 - `-g`, `--tag [GROUP ...]`: Group tag.
   - Stored with a leading dash, e.g. `-g NTb` → `-NTb`.
 - `-serv`, `--service [SERVICE ...]`: Streaming service.
@@ -161,6 +189,7 @@ Note: if a manual TMDb or IMDb id is present in the incoming `meta` before parsi
 - `-kf`, `--keep-folder`: Keep the folder containing the single file (only when supplying a directory).
 - `-knfo`, `--keep-nfo`: Keep nfo file where applicable for specific tracker/s. With single files, must be used in conjunction with `--keep-folder` above.
 - `-reg`, `--region REGION`: Region for discs.
+- `--bluray-url URL`: Use this Blu-ray.com edition page (e.g. `https://www.blu-ray.com/movies/Title-Blu-ray/123456/`) for a disc instead of searching. Use it when the search does not list your edition, for example a 1080p disc from a 4K combo set. The page sets the region, distributor, link and covers; `--region` and `--distributor` still take precedence. Interactive runs also let you paste a URL from the edition list (`u`) or when the search finds no edition. Without this argument, when a matched tracker release's description links exactly one Blu-ray.com edition of the disc's format (DVD or Blu-ray), that edition is used instead of searching.
 
 ## Tracker-specific references (existing torrent ids/links)
 
@@ -176,7 +205,7 @@ Thise will use the specified hash to get tracker ids from qBitTorrent or rTorren
 ## Upload selection / dupe / requests
 
 - `-tk`, `--trackers LIST`: Upload only to these trackers (instead of a default torrent list from config).
-  - Accepts comma-separated tracker identifiers (e.g. `--trackers blutopia,beyondhd`) and normalizes to uppercase.
+  - Accepts comma-separated canonical tracker names or per-tracker `cli_alias` values from config, case-insensitively (e.g. `--trackers CBR,beyondhd` selects `CAPYBARABR` and `BEYONDHD`).
 - `-rtk`, `--trackers-remove LIST`: Remove only these trackers when processing default trackers.
 - `-tpc`, `--trackers-pass N`: How many trackers must pass checks (dupe/banned-group/etc) for the uploading process to complete.
 - `-req`, `--search_requests`: Search for matching requests on supported trackers.
@@ -188,6 +217,12 @@ Thise will use the specified hash to get tracker ids from qBitTorrent or rTorren
 - `-dr`, `--draft`: Send to drafts (BEYONDHD, LST).
 - `-mq`, `--modq`: Send to modQ. NOTE: only for suppported UNIT3D type sites.
 - `-fl`, `--freeleech N`: Freeleech percentage (1–100). Default `0`. NOTE: accepts any numeric value, although UNIT3D defaults to only allowing filtering of specific percentages.
+- `-fl-until`, `--freeleech-until N`: Number of days the torrent should offer freeleech (supported UNIT3D trackers, internal/staff only).
+- `-feat`, `--featured`: Mark upload as Featured (supported UNIT3D tracker, internal/staff only).
+- `-dup`, `--double-upload`: Mark upload as Double Upload (supported UNIT3D trackers, internal/staff only).
+- `-dupuntil`, `--double-upload-until N`: Number of days the torrent should offer double upload (supported UNIT3D trackers, internal/staff only).
+- `-ref`, `--refundable`: Mark upload as Refundable (supported UNIT3D trackers, internal/staff only).
+- `-stk`, `--sticky`: Mark upload as Sticky / pinned (supported UNIT3D trackers, internal/staff only).
 
 ## Anonymity / seeding / streaming flags
 
@@ -207,6 +242,13 @@ Thise will use the specified hash to get tracker ids from qBitTorrent or rTorren
 - `-rh`, `--rehash`: Rehash `.torrent` even if it was not needed.
 - `-mkbrr`, `--mkbrr`: Use mkbrr for torrent hashing.
 - `-entropy`, `--entropy N`: Use entropy in created torrents (32 or 64 bits).
+
+Reusable base torrents are recorded in `tmp/<release-id>/torrent_manifest.json`
+and stored by piece size under `tmp/<release-id>/torrents/<piece-size-bytes>/`.
+Tracker-ready `[TRACKER].torrent` files remain in the release directory. When
+`--nohash` is used, a tracker is skipped if no stored base satisfies its torrent
+policy.
+
 - `-rt`, `--randomized N`: Create N extra torrents with random infohash (default `0`).
 - `--infohash HASH`: V1 info hash to use as the base.
 - `-frc`, `--force-recheck`: (qBittorrent only with auto torrent searching) Force recheck torrent before uploading. NOTE: will find the best seeded torrent file from a supported site, for the related content, and force a recheck before uploading.
@@ -216,7 +258,14 @@ Thise will use the specified hash to get tracker ids from qBitTorrent or rTorren
 - `-client`, `--client NAME`: Use this torrent client instead of default.
 - `-qbt`, `--qbit-tag TAG`: Add to qBittorrent with this tag.
 - `-qbc`, `--qbit-cat CATEGORY`: Add to qBittorrent with this category.
+- `-qbcon`, `--qbit-bw-control`: Enable all qBittorrent bandwidth checks for the upload workflow.
+- `--qbit-bw-control-after-usenet`: Keep per-tracker checks enabled after the Usenet phase. Requires bandwidth control and `upload_order=usenet`.
+- `-qbcrl`, `--qbit-bw-threshold KBPS`: Set the qBittorrent upload-speed threshold in KB/s.
+- `-qbctime`, `--qbit-bw-time SECONDS`: Set the requested averaging period, evaluated in five-second samples; see the workflow guide for effective timing.
+- `-uo`, `--upload-order {concurrent,usenet,tracker}`: Select the Usenet and torrent tracker phase order.
 - `-rtl`, `--rtorrent-label LABEL`: Add to rTorrent with this label.
+
+See [Upload Order and qBittorrent Bandwidth Control](upload-order-and-bandwidth-control.md) for workflow behavior and configuration requirements.
 
 ## Cleanup / temp directory
 
@@ -242,6 +291,9 @@ Thise will use the specified hash to get tracker ids from qBitTorrent or rTorren
 
 - `-u`, `--usenet`: Trigger Usenet upload.
 - `--usenet-subject SUBJECT`: Custom subject line for the Usenet post.
+- `--usenet-episodes-only INDEXER[,INDEXER...]`: With Pesto season mode, submit
+  episode NZBs but skip the final season-pack NZB for the named Usenet
+  indexers. Other selected indexers still receive both episodes and the pack.
 
 ## Unattended (hidden)
 

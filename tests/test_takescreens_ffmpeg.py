@@ -1,13 +1,16 @@
 # Assertions are the idiomatic pytest checks for this focused subprocess test.
 
 import asyncio
+import json
 import sys
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import ffmpeg
 import pytest
+from PIL import Image
 
 from src.domain_models.release import Meta
 from src.integrations.media import screenshot_capture as takescreens
