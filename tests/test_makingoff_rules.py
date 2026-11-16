@@ -29,7 +29,6 @@ def make_meta(**overrides):
         "subtitle_files": [],
         "mediainfo": {"media": {"track": []}},
         "hardcoded_subs": False,
-        "original_language": "en",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -71,10 +70,6 @@ def test_rejects_missing_subtitles():
     assert not asyncio.run(
         tracker().get_additional_checks(make_meta(subtitle_languages=[]))
     )
-
-
-def test_accepts_portuguese_original_language_without_subtitles():
-    assert asyncio.run(tracker().get_additional_checks(make_meta(subtitle_languages=[], original_language="pt")))  # noqa: S101
 
 
 def test_accepts_hardcoded_subtitles_without_a_language_tag():

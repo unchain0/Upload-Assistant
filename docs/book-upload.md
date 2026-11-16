@@ -24,19 +24,18 @@ The assistant automatically detects the subcategory or format of a book upload u
 
 To gather rich metadata with minimal manual input, Upload Assistant implements a hierarchical resolution flow:
 
-$$\text{CLI Overrides} > \text{Audible (audiobooks with ASIN)} > \text{MyAnonamouse (MAM) API} > \text{Google Books API} > \text{OpenLibrary API} > \text{Local File Metadata}$$
+$$\text{CLI Overrides} > \text{MyAnonamouse (MAM) API} > \text{Google Books API} > \text{OpenLibrary API} > \text{Local File Metadata}$$
 
 ### A. Local File Metadata
 
 1. **EPUB**: Automatically decompresses and parses the internal OPF file (`META-INF/container.xml` or any `.opf` file) to extract `title`, `author`, `language`, `year` (from `date`), `isbn` (from `identifier`), `overview` (description), and `publisher`.
 2. **CBR/CBZ**: Automatically parses the internal `ComicInfo.xml` metadata file (case-insensitively located) to extract `title` (from `<Series>` or `<Title>`), `author` (from `<Writer>` or `<Penciller>`), `publisher` (from `<Publisher>`), `year` (from `<Year>`), `book_language` (from `<LanguageISO>`), `overview` (from `<Summary>`), and `genres`/`keywords` (from `<Genre>`, normalized to space-separated commas).
 3. **MOBI**: Extracts the internal OPF file using the `mobi` library to extract `title`, `author`, `language`, `year`, `isbn`, `overview` (with HTML stripped), and `publisher`.
-4. **PDF**: Scans the first 30 pages and the last 30 pages using **PyMuPDF**. It searches for ISBN strings using regular expressions and validates them mathematically using ISBN-10 and ISBN-13 checksum algorithms to avoid false matches.
+4. **PDF**: Scans the first 30 pages and the last 30 pages using **PyMuPDF** (`fitz`). It searches for ISBN strings using regular expressions and validates them mathematically using ISBN-10 and ISBN-13 checksum algorithms to avoid false matches.
 5. **MediaInfo**: Standard container tags (e.g., `Album`, `Performer`, `Composer`, `Publisher`, `Genre`, `ISBN`, `ASIN`, `Comment`, `Description`) are preserved during the extraction phase for audiobooks and ebook files.
 
 ### B. API Metadata Integrations
 
-- **Audible**: For audiobooks with a user-provided or embedded ASIN, the assistant queries the catalog for the marketplace selected by `--audible-url` or `DEFAULT.audible_domain`. Without a marketplace, it does not query Audible. The catalog provides edition-specific title, contributors, publisher, synopsis, ISBN, year, language, cover, series, edition, and aggregate rating where available. It requests cover sizes up to 1215 px and uses the largest returned image. A structured-data page lookup is used if the catalog API fails. The measured file duration takes priority over the catalog duration. Catalog lookups need no Audible account and are cached for 24 hours by marketplace and ASIN.
 - **MyAnonamouse (MAM)**: If the files being uploaded correspond to an active torrent in your local client containing `myanonamouse.net` in trackers, the assistant extracts the torrent ID (`MID=(\d+)`) from the client comments. It then queries the MAM API using your configured `mam_api_key` / `mam_id` to retrieve details like title, authors, narrators, description, ISBN, language, and cover image URL.
 - **Google Books**: If a valid ISBN is resolved locally or provided via CLI, the assistant calls the Google Books API (using `google_books_api_key` if configured) to fetch title, authors, publisher, publication year, genres/keywords, book description, and front cover URL.
 - **OpenLibrary**: If an OpenLibrary Work ID is provided via `-openlib` / `--openlibrary` CLI flag, **or** if an ISBN is available, the assistant queries the OpenLibrary API to fetch title, authors, description, cover image, publisher, publication year, and subjects/keywords. OpenLibrary results have the lowest priority among API sources — they will not override fields already populated by MAM or Google Books.
@@ -50,8 +49,8 @@ $$\text{CLI Overrides} > \text{Audible (audiobooks with ASIN)} > \text{MyAnonamo
 
 ### A. Ebooks (PDF, EPUB, MOBI)
 
-- Uses **PyMuPDF** to render pages at double resolution (`matrix=Matrix(2.0, 2.0)`) into PNG files.
-- Generates the configured number of gallery screenshots (e.g., 5): the cover, then the copyright/ISBN page and the table of contents page when found, and random pages for the rest.
+- Uses **PyMuPDF** (`fitz`) to render pages at double resolution (`matrix=Matrix(2.0, 2.0)`) into PNG files.
+- Randomly samples a configured number of pages (e.g., 5) to generate gallery screenshots.
 - Renders page 0 as `POSTER.png` (Cover) and the last page as `POSTER_BANNER.png`.
 
 ### B. Comics & Manga (CBR, CBZ)
@@ -85,8 +84,6 @@ The duplicate checking module (`dupe_checking.py`) uses custom rules for books t
 ## 5. Console Prompting & Output Formatting
 
 - **Interactive Metadata Prompting**: In attended mode, if required fields (`title`, `author`, `year`, `book_language`) are missing, the console prompts the user to supply them. The release name is then automatically rebuilt.
-- **Audible authors and ratings**: Audiobook descriptions link each Audible author with an ASIN to their author page in the selected marketplace; authors without an ASIN remain plain text. When available, they also include the average score and number of ratings as plain text. The product link appears only on the ASIN. Prices and written reviews are not included.
-- **Synopsis formatting**: Book and audiobook overviews from files or metadata providers convert common HTML formatting, paragraphs, lists, and safe links to BBCode, including HTML-encoded tags. Unsupported markup is removed while its readable text is retained.
 
 ---
 
@@ -102,7 +99,6 @@ You can override auto-detected values using the following command-line flags:
 | `-narrator`  | `--narrator`      | Overrides the audiobook narrator                                                                    |
 | `-isbn`      | `--isbn`          | Overrides the ISBN number                                                                           |
 | `-asin`      | `--asin`          | Overrides the ASIN number                                                                           |
-|              | `--audible-url`   | Audible product URL; sets the ASIN and chooses the marketplace for audiobook metadata               |
 | `-blang`     | `--book-language` | Overrides the book language (e.g. English, Portuguese)                                              |
 | `-openlib`   | `--openlibrary`   | Specifies the OpenLibrary Work ID (e.g. `OL45883W`). Accepts a full OpenLibrary URL or just the ID. |
 | `-comic`     | `--comic`         | Identifies the book upload as a Comic                                                               |
@@ -142,6 +138,7 @@ config = {
 
 The following trackers support the `BOOK` category with custom metadata mapping (e.g., custom form templates, category IDs, and naming patterns):
 
+- **AMIGOSSHARE**: Maps book-specific metadata (author, title) and structures the torrent name as `{author} - {title}`.
 - **BJSHARE**: Fully supports books, audiobooks, comics, mangas, magazines, and newspapers with detailed metadata mappings (format, page count, publisher, ISBN, cover image, description).
 - **BRASILTRACKER**: Supports standard book metadata mapping.
 - **CAPYBARABR**: Supports books, audiobooks, and comics/manga. Treats different ebook formats as duplicates since only one format is allowed per book.
@@ -152,21 +149,6 @@ The following trackers support the `BOOK` category with custom metadata mapping 
 - **LST**: Supports books with OpenLibrary integration, submitting the OpenLibrary Work ID and ISBN alongside the torrent upload.
 - **LATTEAM**: Supports ebooks, audiobooks, comics, and magazines. For audiobooks, appends the narration language to the torrent name (e.g., `(Narracion en Castellano)`). Also supports volume/issue and edition info in the name.
 - **SAMARITANO**: Brazilian tracker (UNIT3D). Maps books to `LIVROS`, audiobooks to `AUDIOBOOK`, and comics/manga to `HQS_E_MANGAS`.
-- **SIMURG**: Library tracker (Gazelle API) for e-books (EPUB, PDF, MOBI, AZW3, DJVU), audiobooks (MP3, M4B, FLAC, Other) and comics & manga (CBR, CBZ, PDF). See [Simurg](#9-simurg) below.
 - **SPEEDAPP**: Supports the `BOOK` category as a unified type (category ID 6), without subcategory splitting.
 - **TORRENTLEECH**: Supports standard book metadata mapping.
 - **YUSCENE**: Supports ebooks and audiobooks as distinct UNIT3D categories.
-
----
-
-## 9. Simurg
-
-Configure `TRACKERS["SIMURG"]` with an API token (Settings > API > API Keys on the site) and your announce URL from the upload page. The token is sent as `Authorization: token ...`.
-
-- **Accepted uploads**: e-books, audiobooks and comics & manga, in English, Turkish or Japanese. One format per torrent. Magazines are refused because the site needs structured issue metadata the adapter does not collect; upload those with the site's form. Newspapers are not accepted.
-- **Duplicate check**: one `browse` search by title, then up to three Release lookups to read each torrent's format, source and file list. Requests are spaced at least 2.5 seconds apart to stay inside the site's limit of 5 requests per 10 seconds.
-- **Asked at upload time**: the source label (Retail, Scan, OCR, Convert or Other; audiobooks: Retail, Scene, WEB, Scan or Other), the audiobook type when the files do not say Unabridged or Abridged, and the comic type unless it is manga. The source is never guessed. In unattended mode, answer with `--answer simurg.source=Retail` and similar, or the upload to Simurg is skipped.
-- **Publication**: Simurg requires reusing the Publication of the same work. The adapter searches existing Publications and asks which one to use (`simurg.destination`): `new`, a Publication ID, or `release:<ID>` to add another format to an existing Release. A single Publication with the same title and author is offered as the default; unattended runs use it, and skip Simurg when the choice is unclear.
-- **New Releases** need genre tags (`--genres`) and, for a new Publication, a synopsis (`--overview`). Format, source and retailer words are dropped from the tags.
-- **Cover**: the hosted artwork or another public image link; links to source trackers are not used.
-- **After upload**: the site's own `.torrent` is downloaded and seeded. The upload request is sent only once; if it times out, check your uploads on the site before trying again. `--debug` prints the payload without uploading.

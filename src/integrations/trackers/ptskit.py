@@ -1,6 +1,8 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+import platform
 from typing import Any, cast
 
+import httpx
 from bs4 import BeautifulSoup
 
 from src.domain_models.release import Meta
@@ -14,14 +16,14 @@ from src.integrations.trackers.description_builder import DescriptionBuilder
 Config = dict[str, Any]
 
 
-class Ptskit(NEXUSPHP):
+class Ptskit:
     """
     PTSKIT is a CHINESE Private Torrent Tracker for MOVIES / TV / GENERAL
     """
 
     auth_type = "cookies"
     tracker = "PTSKIT"
-    display_name = "PTSKIT"
+    display_name = "Ptskit"
     allows_bloated_audio = True
     banned_groups = ()
     source_flag = "[www.ptskit.org] PTSKIT"
@@ -55,11 +57,11 @@ class Ptskit(NEXUSPHP):
 
     async def get_type(self, meta: Meta) -> str | None:
         if meta.anime:
-            return 407
+            return "407"
 
         category_map = {"TV": "405", "MOVIE": "404"}
 
-        return int(category_map.get(meta.category, "404"))
+        return category_map.get(meta.category)
 
     async def generate_description(self, meta: Meta) -> str:
         builder = DescriptionBuilder(self.tracker, self.config)
@@ -126,12 +128,12 @@ class Ptskit(NEXUSPHP):
         response.raise_for_status()
         return self._torrent_names(response.text)
 
-    async def get_data(self, meta: Meta, preview: bool = False) -> dict[str, Any]:
+    async def get_data(self, meta: Meta) -> dict[str, Any]:
         data: dict[str, Any] = {
-            "name": (await self.get_name(meta))["name"],
+            "name": await self.get_name(meta),
             "url": str(meta.imdb_info.get("imdb_url", "")),
-            **({} if preview else {"descr": await self.generate_description(meta)}),
-            "type": self.get_type(meta),
+            "descr": await self.generate_description(meta),
+            "type": await self.get_type(meta),
         }
 
         return data
@@ -156,5 +158,5 @@ class Ptskit(NEXUSPHP):
             success_status_code="302, 303",
         )
 
-    async def get_name(self, meta: Meta) -> dict[str, str]:
-        return {"name": meta.name}
+    async def get_name(self, meta: Meta) -> str:
+        return meta.name

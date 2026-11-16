@@ -75,38 +75,6 @@ def test_matches_torrent_name_when_content_path_is_unavailable():
     )
 
 
-def test_uses_bjshare_torrentid_query():
-    client = Clients({"TRACKERS": {}})
-
-    tracker_ids = client._extract_tracker_ids_from_comment("https://bj-share.info/torrents.php?torrentid=12345")
-
-    assert tracker_ids == {"bjshare": "12345"}  # noqa: S101
-
-
-def test_uses_aither_torrent_comment_id():
-    client = Clients({"TRACKERS": {}})
-
-    tracker_ids = client._extract_tracker_ids_from_comment("This torrent was downloaded from Aither.cc. https://aither.cc/torrents/50049")
-
-    assert tracker_ids == {"aither": "50049"}  # noqa: S101
-
-
-def test_matches_single_file_inside_folder_torrent_content_path():
-    client = Clients({"TRACKERS": {}})
-    media = r"F:\Filmes\SampleFilm\SampleFilm.mkv"
-    torrent = SimpleNamespace(name="SampleFilm", content_path=media)
-
-    assert client._matches_qbit_content_path(torrent, Meta({"path": media, "uuid": "SampleFilm.mkv"}))  # noqa: S101
-
-
-def test_matches_torrent_name_when_content_path_is_unavailable():
-    client = Clients({"TRACKERS": {}})
-    media = r"F:\Filmes\SampleFilm\SampleFilm.mkv"
-    torrent = SimpleNamespace(name="SampleFilm.mkv", content_path="")
-
-    assert client._matches_qbit_content_path(torrent, Meta({"path": media, "filelist": [media], "uuid": "different"}))  # noqa: S101
-
-
 def test_orpheus_uses_its_fixed_base_url():
     tracker = Orpheus(
         {"TRACKERS": {"ORPHEUS": {"base_url": "https://not-orheus.example"}}}

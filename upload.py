@@ -1,70 +1,5 @@
 #!/usr/bin/env python3
-# PYTHON_ARGCOMPLETE_OK
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
-
-import contextlib
-import os
-import sys
-from pathlib import Path
-
-from src.app_paths import CONFIG_PATH, LegacyConfigLocationError, bundled_example_config_path, ensure_legacy_config_absent, ensure_user_config
-from src.config_sync import ConfigSyncError, sync_user_config
-
-_entrypoint_name = Path(sys.argv[0]).stem.lower()
-_is_uploader_entrypoint = __name__ == "__main__" or _entrypoint_name == "ua"
-
-if _is_uploader_entrypoint and "_ARGCOMPLETE" in os.environ:
-    import importlib
-
-    from src.args import Args
-
-    _completion_config: dict[str, object] = {"DEFAULT": {"screens": 0}, "TRACKERS": {}}
-    try:
-        _cfg_mod = importlib.import_module("data.config")
-        _raw_cfg = getattr(_cfg_mod, "config", None)
-        if isinstance(_raw_cfg, dict):
-            _completion_config = dict(_raw_cfg)
-    except ModuleNotFoundError:
-        pass
-    Args(_completion_config).parse(sys.argv[1:], None)
-    sys.exit(0)
-
-if _is_uploader_entrypoint and ("-h" in sys.argv or "--help" in sys.argv):
-    from src.args import Args
-
-    with contextlib.suppress(SystemExit):
-        Args({"DEFAULT": {"screens": 0}}).parse(sys.argv[1:], None)
-    sys.exit(0)
-
-if _is_uploader_entrypoint:
-    try:
-        ensure_legacy_config_absent()
-    except LegacyConfigLocationError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    _is_webui_arg = any((arg == "-webui" or arg == "--webui" or arg.startswith("-webui=") or arg.startswith("--webui=")) for arg in sys.argv)
-    try:
-        _config_created = ensure_user_config()
-    except OSError as exc:
-        print(f"Failed to create configuration file: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-    if _config_created:
-        print(f"Configuration file created at: {CONFIG_PATH}")
-        if not _is_webui_arg:
-            print("Configure it before running an upload, then run the command again.")
-            sys.exit(1)
-    else:
-        try:
-            _config_sync_result = sync_user_config(CONFIG_PATH, bundled_example_config_path())
-        except (ConfigSyncError, OSError) as exc:
-            print(f"Warning: configuration was not automatically updated: {exc}", file=sys.stderr)
-        else:
-            if _config_sync_result.changed:
-                print(f"Configuration updated with {len(_config_sync_result.added_paths)} new setting(s).")
-                print(f"Previous configuration backed up to: {_config_sync_result.backup_path}")
-
 import ast
 import asyncio
 import contextlib
@@ -202,14 +137,7 @@ CLI_UI: Any = cli_ui
 TORF_Torrent: Any = cast(Any, _Torrent)
 RICH_HANDLER: Any = cast(Any, _rich_handler)
 TORRENT_CREATOR: Any = cast(Any, TorrentCreator)
-
-
-def _is_str_dict(val: object) -> TypeIs[dict[str, Any]]:
-    return isinstance(val, dict)
-
-
-def _is_obj_list(val: object) -> TypeIs[list[object]]:
-    return isinstance(val, list)
+CLI_UI.setup(color="always", title="Upload Assistant")
 
 
 def _parse_version_tuple(value: str) -> tuple[int, ...]:
@@ -540,7 +468,7 @@ async def print_progress(message: str, interval: int = 10) -> None:
     try:
         while True:
             await asyncio.sleep(interval)
-            logger.info(message, extra={"ua_gui": False})
+            logger.info(message)
     except asyncio.CancelledError:
         pass
 
@@ -3489,8 +3417,6 @@ async def _run_visual_artifacts_with_progress(
         progress_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await progress_task
-    webui_events.stage("screens", "done")
-    return True
 
 
 def _base_torrent_paths(meta: Meta) -> tuple[str, str]:
@@ -6309,7 +6235,7 @@ async def main() -> None:
         _handle_main_exception(error)
 
 
-def run() -> None:
+if __name__ == "__main__":
     check_python_version()
     exit_code = 0
 
@@ -6318,7 +6244,6 @@ def run() -> None:
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _handle_shutdown_signal)
 
-    interrupted_executor: ThreadPoolExecutor | None = None
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit) as exc:

@@ -56,7 +56,7 @@ def test_hdbits_explicit_id_uses_hdb_meta_key() -> None:
             torrent_id: str,
         ) -> tuple[int, None, str, None, str]:
             assert torrent_id == "12345"
-            return 9876543, None, "Invented.Romance.2012.1080p.BluRay.x264", None, ""
+            return 1602620, None, "Amour.2012.1080p.BluRay.x264", None, ""
 
     meta = Meta({"tracker_ids": {"HDBITS": "12345"}, "unattended": True})
 
@@ -84,7 +84,7 @@ def test_hdbits_use_for_search_false_skips_explicit_id(tmp_path) -> None:
             }
         )
 
-        await manager.get_tracker_data(None, meta, "Invented Romance", "Invented Romance")
+        await manager.get_tracker_data(None, meta, "Amour", "Amour")
 
         assert meta.matched_tracker == ""
 

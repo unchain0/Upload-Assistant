@@ -22,7 +22,6 @@ The config is a Python dict named `config` with these top-level sections:
 - `IMAGES`: static icon URLs used in some descriptions.
 - `TRACKERS`: which trackers to upload to + per-tracker credentials/options.
 - `TORRENT_CLIENTS`: qBittorrent/ruTorrent/etc client configuration.
-- `USENET`: NNTP upload, archiving, parity, and verification settings.
 
 Notes:
 
@@ -61,7 +60,6 @@ Important gotchas:
 ### Metadata APIs
 
 - `tmdb_api` (str, required): TMDb API key. Get it from https://www.themoviedb.org/settings/api
-- `ggn_api_key` (str): Optional read-only GazelleGames API key used to enrich game metadata. It can alternatively be supplied through the `GGN_API_KEY` environment variable.
 - `btn_api` (str): BTN API key (used to fetch BTN details).
 
 ### Image host selection (priority list)
@@ -74,8 +72,6 @@ Order matters: `img_host_1` is primary, later hosts are fallbacks.
 - `image_upload_delay` (float): Minimum delay in seconds between starting image uploads.
 
 ### Image host credentials
-
-- `catbox_userhash` (str): Optional Catbox userhash. Leave blank for anonymous uploads.
 
 - `imgbb_api` (str): API key for imgbb.
 - `lostimg_api` (str): API key for lostimg.
@@ -99,7 +95,6 @@ Detailed documentation on how description layout settings work and affect descri
 - `add_logo` (bool): Add a TMDb logo image at the top of the description.
 - `logo_size` (str): Logo size (example default: `"300"`).
 - `logo_language` (str): ISO 639-1 language code for logo selection (fallback to English).
-- `audible_domain` (str): Optional Audible marketplace domain used to link and look up audiobook ASINs, for example `audible.com.br`. The per-upload `--audible-url` argument overrides it. Without either, Audible is not queried.
 - `episode_overview` (bool): Add episode overview text to description.
 
 Implementation notes:
@@ -115,21 +110,15 @@ Implementation notes:
 - `cutoff_screens` (str): If at least this many screenshots already exist (e.g. pulled from a description), skip capturing/uploading more.
 - `thumbnail_size` (str): Thumbnail width for hosts that support `[img=WIDTH]` (default `"350"`).
 - `screens_per_row` (str): Screenshots per row in description (only for some trackers).
-- `frame_overlay` (bool, default `False`): Master switch for screenshot labels. Individual selections are kept when explicitly configured.
-- `overlay_frame_number`, `overlay_frame_type`, `overlay_timestamp`, `overlay_tonemapped` (bool, default `False`): Choose each label independently. The Tonemapped label appears only when tone mapping occurred.
-- `overlay_text_size` (str or int, default `"18"`): Overlay text size from `1` to `100`, scaled with resolution. VapourSynth rounds to whole font-scale steps.
-- `overlay_position` (str, default `"left"`): Place labels at the top-left (`"left"`) or top-right (`"right"`).
-- `overlay_layout` (str, default `"stacked"`): Use separate lines (`"stacked"`) or a compact row separated by bullets (`"single_line"`).
+- `frame_overlay` (bool): Overlay frame number/type and “Tonemapped” (if applicable) on screenshots.
+- `overlay_text_size` (str): Overlay text size (scales with resolution).
 - `scale_screenshots_for_par` (bool): When `False` (the default), preserve MediaInfo's coded dimensions. Set to `True` only to apply pixel-aspect-ratio correction for non-square-pixel sources; this can change a PNG from `1920x1040` to `1924x1040`.
-- `scale_dvd_screenshots_for_par` (bool): Apply PAR scaling to DVD screenshots and automatically captured DVD menus. Defaults to `True` for display-corrected dimensions; set to `False` to preserve coded dimensions. This setting is independent of `scale_screenshots_for_par`.
-
-See the [frame and screenshot overlay guide](screenshot-overlays.md) for help configuring **Frame Number, Frame Type, Timestamp and Tonemapped labels**. It includes images of stacked and single-line overlays, a copyable config example and guidance for existing configs.
 
 Implementation notes:
 
 - Screenshot capture/reuse logic is in `src/takescreens.py`. In particular, `cutoff_screens` is used to decide whether existing images in `meta['image_list']` are “enough” to skip taking new screenshots.
 - `thumbnail_size` and `screens_per_row` affect how screenshot BBCode is rendered in descriptions (see `src/get_desc.py`).
-- Active frame-number or frame-type labels trigger extra probing work to collect frame information (slower). Active overlays can affect which tonemapping pipeline is used.
+- `frame_overlay` triggers extra probing work to collect frame information (slower), and can affect which tonemapping pipeline is used.
 
 ### HDR tonemapping
 
@@ -182,7 +171,6 @@ These can be [overridden per-tracker](#tracker-overridable-settings) by adding t
 
 - `custom_description_header` (str): BBCode header added at top of description section.
 - `screenshot_header` (str): BBCode header added above screenshots.
-- `hide_screenshot_header_if_only_section` (bool): Hide the generated image-section header when it is the only one rendered (default `True`). Applies to screenshots, disc menus, audio spectrograms and dynamic HDR plots. Logos, text and signatures do not count; tone-mapping notices are preserved. Set to `False` to always keep these headers.
 - `disc_menu_header` (str): BBCode header added above disc menu screenshots (discs only).
 - `audio_spectrogram_header` (str): BBCode header added above audio spectrograms.
 - `dynamic_hdr_plot_header` (str): BBCode header added above dynamic HDR metadata plots.
@@ -231,7 +219,6 @@ These can be [overridden per-tracker](#tracker-overridable-settings) by adding t
 
 - `default_torrent_client` (str): Name of the client config to use (matches a key under `TORRENT_CLIENTS`, e.g. `"qbittorrent"`).
 - `skip_auto_torrent` (bool): Skip automated torrent searching in your qBitTorrent client.
-- `skip_auto_torrent_personalrelease` (bool): Also skip automated torrent searching when the upload is a personal release.
 
 Implementation notes:
 
@@ -240,9 +227,7 @@ Implementation notes:
 
 ### UX / safety toggles
 
-- `sfx_on_prompt` (bool, default `True`): Play a bell before release confirmation. CLI runs use the terminal bell; WebUI runs play the sound in the browser after clicking Execute. Allow site audio and keep the tab unmuted. Fully unattended runs skip the sound along with confirmation.
-- `webui_keep_uploads_on_disconnect` (bool, default `True`): Keep a WebUI upload running after its browser tab closes, reloads, or loses the connection. Reopen the WebUI to see its tab again. Set to `False` to kill an upload as soon as its tab disconnects.
-- `webui_unattended_prompt_timeout` (number, default `60`): Minutes a WebUI upload may wait at an unanswered prompt while no browser is connected before it is killed. Set `0` to wait indefinitely.
+- `sfx_on_prompt` (bool): Play a bell sound effect when asking for confirmation.
 - `embed_links` (bool): Set true to embed terminal links using terminal hyperlinks (OSC 8). Set false to display the full raw URLs. `embed_dupe_links` remains supported temporarily as a deprecated alias.
 - `tracker_pass_checks` (str): Minimum number of trackers that must pass checks to continue upload.
 - `use_largest_playlist` (bool): Always use the largest Blu-ray playlist without prompting.
@@ -261,21 +246,12 @@ Implementation notes:
 - `use_sonarr` (bool): Enable Sonarr searching.
 - `sonarr_url` (str): Sonarr base URL.
 - `sonarr_api_key` (str): Sonarr API key.
-- `sonarr_url_1` … `sonarr_url_3` / `sonarr_api_key_1` … `sonarr_api_key_3` (str): Up to three optional additional Sonarr instances.
+- `sonarr_url_1` / `sonarr_api_key_1` (str): Optional second Sonarr instance.
 
 - `use_radarr` (bool): Enable Radarr searching.
 - `radarr_url` (str): Radarr base URL.
 - `radarr_api_key` (str): Radarr API key.
-- `radarr_url_1` … `radarr_url_3` / `radarr_api_key_1` … `radarr_api_key_3` (str): Up to three optional additional Radarr instances.
-
-### Prowlarr Credential Fallback
-
-- `prowlarr_url` (str): Optional Prowlarr base URL. Set this together with `prowlarr_api_key` to retrieve supported tracker credentials at the start of each run.
-- `prowlarr_api_key` (str): Optional Prowlarr API key. Credentials retrieved from Prowlarr remain in memory and only fill missing local values.
-
-The integration supports API-key and raw-cookie fields exposed by enabled Cardigann indexers. Prowlarr masks some native-indexer secrets as `********`; UA ignores those values. Local API keys and cookie files take precedence.
-
-UA queries configured instances in order, starting with the unsuffixed primary instance and then continuing through suffixes `_1`, `_2`, and `_3`. Optional instances are omitted by default and can be added from the WebUI when needed.
+- `radarr_url_1` / `radarr_api_key_1` (str): Optional second Radarr instance.
 
 ### Torrent creation
 
@@ -314,9 +290,7 @@ Implementation notes:
 
 ### Logging / output
 
-- `post_upload_hooks` (list[str]): Trusted Python scripts in `STATE_DIR/custom_hooks` (Docker: `/state/custom_hooks`) to run after each item's upload flow. Each receives final metadata as JSON on standard input; its output is shown in the terminal.
-- `post_upload_inprocess_hooks` (list[str]): Trusted hooks in the same folder, loaded into Upload Assistant and called as `on_upload_finished(meta, config)`. They receive deep copies and can use the project logger directly.
-- `post_upload_hook_timeout` (number): Maximum seconds for each subprocess post-upload hook; defaults to 30. A failed hook does not fail the upload.
+- `keep_meta` (bool): Do not delete existing `meta.json` before running (NOT recommended).
 - `show_upload_duration` (bool): Print how long each tracker upload took.
 - `print_tracker_messages` (bool): Print tracker API messages returned during upload.
 - `print_tracker_links` (bool): Print direct torrent links after upload.
@@ -363,14 +337,6 @@ Example:
 ```
 
 ### Per-tracker blocks
-
-In the WebUI's **Tracker-Specific DEFAULT Overrides**, untick a field and save to
-inherit its current `DEFAULT` value. The tracker setting stays in `config.py` as
-`None` (for example, `"add_logo": None`), so automatic configuration updates keep
-that choice. Later changes to `DEFAULT` also apply to inherited fields. Tick the
-field to save a tracker-specific value instead. `False`, `0`, and an empty text
-override are explicit values, not the `None` inheritance marker. Matching
-release-group text overrides still take precedence.
 
 Each tracker identifier (e.g. `"AITHER"`, `"BLUTOPIA"`) contains a dict of settings.
 
@@ -435,7 +401,7 @@ Security note: these settings allow the CLI to interact with your torrent client
 
 Typical keys:
 
-- `qui_proxy_url` (str): Optional. [qui reverse proxy](https://getqui.com/docs/features/reverse-proxy) URL for qBittorrent. Create a **Client Proxy API Key** in qui (**Settings → Client Proxy Keys**): name the client (e.g. "Upload Assistant"), choose the qBittorrent instance, then copy the generated proxy URL. Use the **full** URL, e.g. `http://localhost:7476/proxy/<client-api-key>`. The instance is fixed by the key you create.
+- `qui_proxy_url` (str): Optional. [QUI reverse proxy](https://getqui.com/docs/features/reverse-proxy) URL for qBittorrent. Create a **Client Proxy API Key** in QUI (**Settings → Client Proxy Keys**): name the client (e.g. "Upload Assistant"), choose the qBittorrent instance, then copy the generated proxy URL. Use the **full** URL, e.g. `http://localhost:7476/proxy/<client-api-key>`. The instance is fixed by the key you create. This proxy is not used by **Bandwidth Control**; when that feature is enabled, configure `qbit_url` / `qbit_port` and either `qbit_api_key` or `qbit_user` / `qbit_pass` as well.
 - `enable_search` (bool): Search client for existing torrents to reuse hashes. NOTE: independant of auto_torrent_searching
 - `qbit_url` / `qbit_port` (str): qBittorrent API/Web UI host and port.
 - `qbit_user` / `qbit_pass` (str): Credentials.
@@ -443,17 +409,14 @@ Typical keys:
 - `super_seed_trackers` (list[str]): Trackers to enable super-seeding on.
 - `use_tracker_as_tag` (bool): Tag torrents with the tracker identifier.
 - `qbit_tag` / `qbit_cat` (str): Tag/category for uploaded torrents.
-- `qbit_cross_tag` / `qbit_cross_cat` (str): Tag/category applied when UA adds a cross-seed torrent. When empty, the normal qBittorrent tag/category rules apply.
-- `content_layout` (str): qBittorrent content layout for every torrent added through this client. Use `"Original"`, `"Subfolder"`, or `"NoSubfolder"` (default `"Original"`).
+- `qbit_cross_tag` / `qbit_cross_cat` (str): Tag/category for cross-seed torrents.
+- `content_layout` (str): Layout hint (example default `"Original"`).
 - `linking` (str): `"symlink"`, `"hardlink"`, or empty to disable.
-- `allow_fallback` (bool): Fallback to original path injection if linking fails, including when no `linked_folder` matches the content's drive.
+- `allow_fallback` (bool): Fallback to original path injection if linking fails.
 - `linked_folder` (list[str]): Destination folder(s) for linked content. This is the top level directory that will contain the linked content.
 - `local_path` / `remote_path` (list[str]): Local/remote path mapping (docker/seedbox), matched case-insensitively. Local path is how UA sees the content, remote path is how the client sees the content.
-- `match_existing_content` (str): For a client that seeds its own copy of your files, such as a seedbox. Before adding, UA looks in this client for a complete torrent holding the same files (names and sizes) and seeds the new torrent from that torrent's folder, without path mapping or linking. `"prefer"` uses that copy when found and otherwise the path mapping; `"require"` adds the torrent to this client only when such a copy is found. Empty (default) always uses the path mapping. See [Seeding From a Second Client (Seedbox)](seeding-from-a-second-client.md).
 - `link_dir_name` (str): Optional single directory name for linked content. Path separators, parent traversal, absolute paths, and Windows drive/device names are rejected.
 - `torrent_storage_dir` (str, optional): Only needed if API searching doesn’t work. Falls back to search the client storage directory for existing torrents.
-
-For bandwidth-control connection requirements and workflow settings, see [Upload Order and qBittorrent Bandwidth Control](upload-order-and-bandwidth-control.md).
 
 ### ruTorrent / rTorrent
 
@@ -485,7 +448,7 @@ For bandwidth-control connection requirements and workflow settings, see [Upload
 
 ### Tracker overridable settings
 
-Tracker overridable settings are settings inside each tracker config dictionary that override the values in DEFAULT. Edit them through the WebUI's **Tracker-Specific DEFAULT Overrides** or directly in `config.py`. Set a tracker setting to `None` to inherit DEFAULT while keeping the setting in the file.
+Tracker overridable settings are settings that you can add inside each tracker config dictionary; these settings override the values inside the DEFAULT config. In order for this to work, you must edit the config file, locate the tracker by name, and add your custom value.
 
 Example:
 

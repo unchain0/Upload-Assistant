@@ -6,16 +6,6 @@ from src.integrations.observability.console import (
 )
 
 
-def test_ansi_to_html_does_not_echo_to_server_output(capsys) -> None:
-    html = ansi_to_html("\x1b[31mExample output\x1b[0m")
-
-    assert "Example output" in html
-    assert "color:" in html
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == ""
-
-
 def test_prompt_in_thread_returns_prompt_result() -> None:
     async def ask() -> str:
         return await prompt_in_thread(

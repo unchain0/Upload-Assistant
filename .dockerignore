@@ -30,15 +30,6 @@ Dockerfile
 # Documentation (not needed at runtime)
 docs
 
-# Local configuration, credentials and runtime state (never bake into the image)
-data/config*.py
-data/cookies
-data/cache
-data/nfos
-data/tvdb
-data/banned
-data/web_ui
-
 # Runtime artifacts that should not leak into the build context
 tmp
 *.torrent
@@ -64,17 +55,11 @@ bin/MI/linux
 bin/dovi_tool
 bin/hdr10plus_tool
 
-# Local build and test output
-build
-dist
-.setuptools-build
-.pytest_cache
-*.lnk
-
 # OS junk
 Thumbs.db
 .DS_Store
 
 # Tests / CI
 tests
+.bandit.yaml
 bandit.yaml

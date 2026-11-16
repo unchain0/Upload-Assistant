@@ -8,15 +8,7 @@ import re
 from dataclasses import asdict, dataclass
 from difflib import SequenceMatcher
 from enum import StrEnum
-from typing import Any, TypeIs
-
-
-def _is_obj_list(val: object) -> TypeIs[list[object]]:
-    return isinstance(val, list)
-
-
-def _is_str_dict(val: object) -> TypeIs[dict[str, object]]:
-    return isinstance(val, dict)
+from typing import Any
 
 
 class TrackerDescriptionMode(StrEnum):

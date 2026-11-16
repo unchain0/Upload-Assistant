@@ -11,7 +11,6 @@ def make_meta(**overrides):
         "manual_episode_title": "",
         "daily_episode_title": "",
         "name": "Example 2024 1080p WEB-DL DD 5.1 H.264-GROUP",
-        "manual_name": None,
         "has_encode_settings": False,
         "tag": "GROUP",
         "category": "MOVIE",
@@ -39,27 +38,6 @@ def make_meta(**overrides):
 
 def tracker(name):
     return AZTrackerBase({"TRACKERS": {name: {}}}, name)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("release", "tv_pack", "expected"),
-    [
-        ("S01", 1, "Example S01 (2026) 1080p WEB-DL H.264-GROUP"),
-        ("S01E02", 0, "Example S01E02 1080p WEB-DL H.264-GROUP"),
-    ],
-)
-async def test_avistaz_tv_year_only_appears_in_season_packs(release, tv_pack, expected):
-    meta = make_meta(
-        name=f"Example {release} 1080p WEB-DL H.264-GROUP",
-        category="TV",
-        year="2024",
-        season_int=1,
-        imdb_info={"seasons_summary": [{"season": 1, "year": 2026}]},
-        tv_pack=tv_pack,
-    )
-
-    assert await tracker("AVISTAZ").get_name(meta) == expected  # noqa: S101
 
 
 @pytest.mark.asyncio

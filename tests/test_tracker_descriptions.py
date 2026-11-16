@@ -130,23 +130,6 @@ def test_unit3d_candidate_keeps_description_in_memory(tmp_path):
     asyncio.run(run())
 
 
-def test_bjshare_description_without_ids_is_a_match(tmp_path):
-    class FakeBJShare:
-        async def get_torrent_metadata(self, _meta, torrent_id, skip_tracker_descriptions=False):
-            assert torrent_id == "10"
-            assert not skip_tracker_descriptions
-            return 0, 0, 0, 0, "A fictional overview.", None, None, [], "Fictional.Story.m4b"
-
-    async def run():
-        meta = Meta({"base_dir": str(tmp_path), "uuid": "book", "category": "BOOK", "tracker_description_mode": "text", "persist_description": False})
-        meta, match = await update_metadata_from_tracker("BJSHARE", FakeBJShare(), meta, "Fictional.Story.m4b", "Fictional.Story.m4b", torrent_id="10")
-        assert match
-        assert meta.description == "A fictional overview."
-        assert not meta.imdb_id
-
-    asyncio.run(run())
-
-
 def test_selected_tracker_description_can_be_discarded(monkeypatch):
     async def run():
         manager = TrackerDataManager({"DEFAULT": {}, "TRACKERS": {}})

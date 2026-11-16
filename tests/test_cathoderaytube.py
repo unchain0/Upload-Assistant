@@ -76,8 +76,6 @@ def meta(**overrides):
         "tmdb_poster_path": "",
         "artwork_url": "",
         "hosted_artwork": [],
-        "valid_mi": True,
-        "manual_name": None,
     }
     values.update(overrides)
     result = SimpleNamespace(**values)
@@ -95,7 +93,7 @@ def test_maps_categories_and_builds_description():
         "title": "Example Movie (2010)",
         "taglist": "movies, 2010, 2010s, drama, mystery, 1080p, bluray, remux, h.264, ac3, 5.1, english.audio, english.sub",
         "image": "",
-        "desc": "[info]\nhttps://www.imdb.com/title/tt1234567/\nhttps://www.themoviedb.org/movie/123\n[/info]\n\n[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=0]Upload-Assistant[/size][/url][/align]",
+        "desc": "[info]\nhttps://www.imdb.com/title/tt1234567/\nhttps://www.themoviedb.org/movie/123\n[/info]\n\n[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]Upload-Assistant[/size][/url][/align]",
         "anonymous": "1",
     }
     assert (
@@ -199,7 +197,7 @@ def test_cover_uses_only_an_approved_image_host():
 
 def test_extracts_matching_upload_from_site_log():
     html = """
-    <table><tr><td>2 mins ago</td><td>Torrent 22015 (An Invented Film (2001)) (41 GiB) was uploaded by User</td>
+    <table><tr><td>2 mins ago</td><td>Torrent 22015 (A Beautiful Mind (2001)) (41 GiB) was uploaded by User</td>
     <td><a href="/details.php?id=22015">22015</a></td></tr></table>
     """
     assert (
@@ -288,7 +286,7 @@ def test_renders_crt_category_description_templates():
     movie = meta(
         overview="A spoiler-free plot.",
         description="Release-specific note.",
-        image_list=[{"raw_url": f"https://iili.io/{index}.png"} for index in range(1, 4)],
+        image_list=[{"raw_url": "https://iili.io/one.png"}],
         is_disc="BDMV",
         discs=[{"summary": "Disc Title: EXAMPLE"}],
     )
@@ -296,9 +294,9 @@ def test_renders_crt_category_description_templates():
         "[info]\nhttps://www.imdb.com/title/tt1234567/\nhttps://www.themoviedb.org/movie/123\n[/info]\n"
         "[plot]\nA spoiler-free plot.\n[/plot]\n"
         "[notes]\nRelease-specific note.\n[/notes]\n"
-        "[screens]\nhttps://iili.io/1.png https://iili.io/2.png https://iili.io/3.png\n[/screens]\n"
+        "[screens]\nhttps://iili.io/one.png\n[/screens]\n"
         "[details]\n[mediainfo]\nDisc Title: EXAMPLE\n[/mediainfo]\n[/details]\n\n"
-        "[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=0]Upload-Assistant[/size][/url][/align]"
+        "[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]Upload-Assistant[/size][/url][/align]"
     )
     game = meta(
         category="GAME",
@@ -311,49 +309,8 @@ def test_renders_crt_category_description_templates():
     )
     assert asyncio.run(site.generate_description(game)) == (
         "[info]\nhttps://store.steampowered.com/app/1\n[/info]\n[plot]\nGame plot\n[/plot]\n\n"
-        "[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=0]Upload-Assistant[/size][/url][/align]"
+        "[align=right][url=https://github.com/wastaken7/Upload-Assistant][size=1]Upload-Assistant[/size][/url][/align]"
     )
-
-
-def test_strips_mediainfo_report_by_footer_from_description(monkeypatch):
-    site = tracker()
-    report = (
-        "General\nComplete name : Example.Movie.2010.VTS_01_0.IFO\nReportBy : MediaInfoLib - v26.10\n\n"
-        "General\nComplete name : Example.Movie.2010.VTS_01_1.VOB\nReportBy                                 : MediaInfoLib - v26.10\n"
-    )
-    monkeypatch.setattr(cathoderaytube_module.DescriptionBuilder, "get_bdinfo_section", AsyncMock(return_value=""))
-    monkeypatch.setattr(cathoderaytube_module.DescriptionBuilder, "get_mediainfo_section", AsyncMock(return_value=report))
-
-    description = asyncio.run(site.generate_description(meta()))
-
-    assert "ReportBy" not in description  # noqa: S101
-    assert (  # noqa: S101
-        "[mediainfo]\nGeneral\nComplete name : Example.Movie.2010.VTS_01_0.IFO\n\nGeneral\nComplete name : Example.Movie.2010.VTS_01_1.VOB\n[/mediainfo]" in description
-    )
-
-
-def test_places_supplemental_images_in_notes_and_groups_screenshots_by_three():
-    site = tracker()
-    item = meta(
-        description="Release note.",
-        menu_images=[{"raw_url": "https://iili.io/menu.png"}],
-        spectrograms_images=[{"raw_url": "https://iili.io/spectrum.png"}],
-        dynamic_hdr_plot_images=[{"raw_url": "https://iili.io/hdr.png"}],
-        image_list=[{"raw_url": f"https://iili.io/screen{i}.png"} for i in range(1, 9)] + [{}],
-    )
-
-    description = asyncio.run(site.generate_description(item))
-    assert "[notes]\nRelease note.\n\nhttps://iili.io/menu.png\nhttps://iili.io/spectrum.png\nhttps://iili.io/hdr.png\n[/notes]" in description  # noqa: S101
-    assert (  # noqa: S101
-        "[screens]\nhttps://iili.io/screen1.png https://iili.io/screen2.png https://iili.io/screen3.png\n"
-        "https://iili.io/screen4.png https://iili.io/screen5.png https://iili.io/screen6.png\n[/screens]" in description
-    )
-
-
-def test_supplemental_images_create_notes_without_note_text():
-    description = asyncio.run(tracker().generate_description(meta(menu_images=[{"raw_url": "https://iili.io/menu.png"}])))
-    assert "[notes]\nhttps://iili.io/menu.png\n[/notes]" in description  # noqa: S101
-    assert "[screens]" not in description  # noqa: S101
 
 
 def test_builds_simple_advanced_search_params():
@@ -448,7 +405,7 @@ def test_content_name_uses_the_file_for_single_file_torrents():
     <div id="files_22000"><table>
       <tr class="smallhead"><td colspan="2">/</td></tr>
       <tr class="rowa"><td><strong>File Name</strong></td><td><strong>Size</strong></td></tr>
-      <tr><td>Invented.Archive.Film.1971.mkv</td><td>23.90 GiB</td></tr>
+      <tr><td>The.Abominable.DrPhibes.1971.mkv</td><td>23.90 GiB</td></tr>
     </table></div>
     """
     assert (

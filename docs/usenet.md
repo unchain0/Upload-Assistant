@@ -75,52 +75,6 @@ config = {
 }
 ```
 
-### Managed Pesto binaries
-
-Automatic downloads use the version and SHA-256 checksums pinned in
-`bin/binary_dependency_pins/pesto.py`. Linux x86_64 and ARM64 (`aarch64` or
-`arm64`), and Windows x86_64 are supported. The Linux ARM64 binary requires
-glibc 2.36 or newer, as provided by the current Docker image.
-
-The weekly binary dependency workflow checks the latest stable release and
-opens a PR to update the pins. It requires the ARM64 artifact as well as the
-Linux and Windows x86_64 artifacts. To refresh the Pesto pin locally, run
-`python -m scripts.update_binary_dependency pesto` from the repository root.
-
-### Pesto season uploads
-
-Set `"usenet_uploader": "pesto"` and `"pesto_season_upload": True` to use
-Pesto's `--season` mode for TV season packs. The input must be a directory and
-each top-level entry is treated as an independent episode. Pesto generates one
-NZB per episode and a consolidated NZB named after the season directory.
-Upload Assistant submits every episode NZB to the selected Usenet indexers
-first, followed by the complete season NZB.
-
-This option is ignored for movies, individual TV episodes, non-directory
-inputs, and the Nyuu backend. When `skip_archive` is false, Pesto creates a
-separate archive for each episode and preserves the configured volume size and
-archive password. The feature is disabled by default.
-
-When `obscure_subject` is enabled, `pesto_obfuscation_mode` controls Pesto's
-filename behavior. Use `"light"` when archive volume names must remain opaque
-inside the NZB and therefore in indexer file listings. Pesto's `"full"` mode
-obfuscates the NNTP Subject and yEnc name but deliberately restores readable
-filenames inside the NZB. Existing configurations without this key continue to
-use `"full"`; add `"pesto_obfuscation_mode": "light"` to opt into opaque NZB
-filenames. Other Pesto modes accepted by UA are `"article"` and
-`"full-shared"`.
-
-To suppress only the final pack submission for specific indexers, pass their
-codes to `--usenet-episodes-only`. For example:
-
-```bash
-ua "/path/to/Show.S01" -tk CURUPIRA,NZBNEST \
-  --usenet-episodes-only CURUPIRA
-```
-
-Both indexers receive the individual episode NZBs; only NZBNEST receives the
-consolidated season NZB. Multiple episode-only indexers can be comma-separated.
-
 ### Dynamic Volume Size Mapping (`auto`)
 
 When `"rar_volume_size"` is set to `"auto"`, the assistant dynamically selects the volume size based on the total payload size:
@@ -172,5 +126,3 @@ You can combine torrent tracker uploads and Usenet posting in a single run:
 ```bash
 python upload.py "/path/to/Movie.Name.2026.1080p.mkv" -tk BLUTOPIA,CURUPIRA
 ```
-
-See [Upload Order and qBittorrent Bandwidth Control](upload-order-and-bandwidth-control.md) to choose whether the Usenet and torrent tracker phases run concurrently or sequentially.

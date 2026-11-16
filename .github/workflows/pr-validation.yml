@@ -26,17 +26,7 @@ jobs:
       - name: Set up Python 3.14
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: ${{ matrix.python }}
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Verify dependency files
-        shell: bash
-        run: |
-          uv lock --check
-          uv export --format requirements-txt --no-hashes --no-emit-project --no-header --no-annotate --output-file "$RUNNER_TEMP/requirements.txt"
-          diff -u requirements.txt "$RUNNER_TEMP/requirements.txt"
+          python-version: "3.14"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1

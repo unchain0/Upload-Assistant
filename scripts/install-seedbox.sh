@@ -7,7 +7,7 @@ UA_DIR="${HOME}/tools/ua"
 SKIP_PYENV_INSTALL=0
 FORCE_UPDATE=0
 PYENV_ROOT_DEFAULT="${HOME}/.pyenv"
-PYENV_GIT_REF="v2.8.14"
+PYENV_GIT_REF="v2.6.7"
 PYENV_REPO_URL="https://github.com/pyenv/pyenv.git"
 
 usage() {
@@ -18,7 +18,7 @@ Install or update Upload Assistant on a Linux box without requiring root.
 
 Options:
   --ua-dir PATH           Installation directory (default: ~/tools/ua)
-  --python VERSION        Python version for pyenv (default: 3.15.0)
+  --python VERSION        Python version for pyenv (default: 3.14.0)
   --skip-pyenv-install    Fail instead of installing pyenv automatically
   --force-update          Recreate .venv and synchronize the lockfile again
   -h, --help              Show this help
@@ -104,26 +104,10 @@ install_uv() {
     trap - RETURN
 }
 
-keep_supported_venv_python() {
-    # Reruns update an existing install, so keep a .venv that still runs a supported
-    # Python instead of failing because the default version moved on.
-    local venv_python="${UA_DIR}/.venv/bin/python"
-    if [ "$PYTHON_VERSION_SET" -eq 1 ] || [ "$FORCE_UPDATE" -eq 1 ] || [ ! -x "$venv_python" ]; then
-        return 0
-    fi
-
-    local venv_python_version
-    venv_python_version="$("$venv_python" -c 'import sys; print(".".join(map(str, sys.version_info[:3])) if sys.version_info >= (3, 14) else "")')" || return 0
-    if [ -n "$venv_python_version" ] && [ "$venv_python_version" != "$PYTHON_VERSION" ]; then
-        log "Keeping the existing .venv on Python ${venv_python_version}; rerun with --force-update to move it to Python ${PYTHON_VERSION}"
-        PYTHON_VERSION="$venv_python_version"
-    fi
-}
-
 install_python_if_needed() {
     if ! pyenv versions --bare | grep -qx "$PYTHON_VERSION"; then
         log "Installing Python ${PYTHON_VERSION} via pyenv"
-        pyenv install "$PYTHON_VERSION" || fail "pyenv could not install Python ${PYTHON_VERSION}. Update pyenv (git -C \"$(pyenv root)\" pull) or choose another version with --python"
+        pyenv install "$PYTHON_VERSION"
     fi
 }
 

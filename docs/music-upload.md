@@ -28,7 +28,7 @@ For scene WEB releases, `.nfo` sidecars are read as auxiliary, lower-confidence 
 
 ## Orpheus
 
-Configure the `TRACKERS["ORPHEUS"]` entry with an API token and announce URL. The adapter performs a few narrow, read-only `browse` requests for duplicate checking and builds the Gazelle upload fields only after the normal Upload Assistant confirmation workflow reaches the tracker.
+Configure the `TRACKERS["ORPHEUS"]` entry with an API token and announce URL. The adapter performs one narrow, read-only `browse` request for duplicate checking and builds the Gazelle upload fields only after the normal Upload Assistant confirmation workflow reaches the tracker.
 
 Orpheus's `image` field is optional, but artwork improves the catalog. MUSIC first selects a local `cover`/`front`/`folder` image when present, otherwise extracts a front-cover image embedded in FLAC, MP3 or MP4/M4A tags. After the normal user confirmation, it uploads that single local image through the configured image host (the Orpheus form recommends imgbb) and reuses its cached raw URL; a user-supplied link always takes precedence. Discogs, Facebook CDN, Photobucket and ptpimg artwork links are omitted because the Orpheus form disallows them. Debug never calls the image host and still prints a complete payload with the optional image field omitted.
 

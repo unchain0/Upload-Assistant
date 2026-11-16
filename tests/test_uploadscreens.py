@@ -1,8 +1,7 @@
 import asyncio
-import json
 from itertools import pairwise
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -96,6 +95,7 @@ def test_upload_screens_does_not_reupload_source_on_fallback(
             )
 
     asyncio.run(exercise())
+    assert calls == ["image-1.png"]
 
 
 def test_upload_screens_preserves_partial_successes_across_fallback(
@@ -118,7 +118,7 @@ def test_upload_screens_preserves_partial_successes_across_fallback(
             "web_url": f"https://img.example/{filename}/{host}",
         }
 
-    async def exercise() -> tuple[list[dict[str, str]], int, dict[str, object]]:
+    async def exercise() -> tuple[list[dict[str, str]], int]:
         for filename in ("image-1.png", "image-2.png"):
             (tmp_path / filename).write_bytes(b"image")
         meta = Meta(
@@ -133,7 +133,6 @@ def test_upload_screens_preserves_partial_successes_across_fallback(
             },
             "TRACKERS": {},
         }
-        shared_return_dict: dict[str, object] = {}
         with (
             patch(
                 "src.integrations.image_hosts.uploader.screenshots_dir",
@@ -149,10 +148,9 @@ def test_upload_screens_preserves_partial_successes_across_fallback(
                 new=fake_upload,
             ),
         ):
-            image_list, uploaded_count = await _upload_screens(config, meta, 1, 1, 0, 2, [], shared_return_dict)
-            return image_list, uploaded_count, shared_return_dict
+            return await _upload_screens(config, meta, 1, 1, 0, 2, [], {})
 
-    image_list, uploaded_count, stats_counters = asyncio.run(exercise())
+    image_list, uploaded_count = asyncio.run(exercise())
     assert uploaded_count == 2
     assert len(image_list) == 2
     assert calls == [

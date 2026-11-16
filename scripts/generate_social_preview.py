@@ -144,17 +144,8 @@ def draw_social_preview():
         width=divider_h,
     )
 
-    # 7. Badges (Left Column)
-    def draw_badge(
-        x: float,
-        y: float,
-        w: float,
-        h: float,
-        bg_color: tuple[int, int, int, int],
-        border_color: tuple[int, int, int, int],
-        text: str,
-        text_color: tuple[int, int, int, int],
-    ) -> None:
+    # 8. Badges (Left Column)
+    def draw_badge(x, y, w, h, bg_color, border_color, text, text_color):
         badge_layer = Image.new("RGBA", (1280, 640), (0, 0, 0, 0))
         b_draw = ImageDraw.Draw(badge_layer)
         # Background
@@ -217,14 +208,14 @@ def draw_social_preview():
         (231, 229, 228, 255),
     )
 
-    # 8. Render and Paste Logo
+    # 9. Render and Paste Logo
     logo_img = draw_logo(logo_size)
     img.paste(logo_img, (int(logo_x), int(logo_y)), mask=logo_img)
 
     return img
 
 
-def main() -> None:
+def main():
     print("Generating GitHub Social Preview PNG...")
     base_dir = Path(__file__).resolve().parent.parent
 
