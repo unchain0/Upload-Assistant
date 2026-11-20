@@ -1014,9 +1014,13 @@ class DupeChecker:
     ) -> bool:
         title = re.sub(r"[^\w]+", " ", str(ctx.meta.title or "").casefold())
         name = re.sub(r"[^\w]+", " ", release_name.casefold())
+        if not title.strip() or ctx.target_season_number is None:
+            return False
         return bool(
-            title.strip()
-            and re.match(rf"^{re.escape(title.strip())}(?=\s|$)", name)
+            re.match(
+                rf"^{re.escape(title.strip())}(?:\s+(?:19|20)\d{{2}})?\s+s0*{ctx.target_season_number}(?=\s|$)",
+                name,
+            )
         )
 
     @classmethod

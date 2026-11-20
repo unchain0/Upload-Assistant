@@ -372,6 +372,15 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
             file_count=1,
             res="720p",
         )
+        subtitle_variant_same_group = _entry(
+            "Fiction Mystery Files: Origins S01 720p WEB-DL-GROUP",
+            files=[
+                "Fiction.Mystery.Files.Origins.S01E01.720p.WEB-DL-GROUP.mkv"
+            ],
+            file_count=1,
+            res="720p",
+            size=80,
+        )
         same_group_source_mismatch = _entry(
             "Fiction Mystery Files S01 720p BluRay-GROUP",
             files=["Fiction.Mystery.Files.S01E01.720p.BluRay-GROUP.mkv"],
@@ -391,6 +400,7 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
                 same_group_lower_resolution,
                 other_group_lower_resolution,
                 other_series_same_group,
+                subtitle_variant_same_group,
                 same_group_source_mismatch,
                 same_group_hdr_mismatch,
             ],
