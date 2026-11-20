@@ -554,6 +554,13 @@ _DEFINITIONS = {
     "UTOPIA": TrackerDefinition(
         "UTOPIA", "unit3d_api", ("TV", "MOVIE"), ("utp.to",), False
     ),
+    "VULTU": TrackerDefinition(
+        "VULTU",
+        "other_api",
+        ("MOVIE", "TV", "GAME", "MUSIC"),
+        ("vultu.org",),
+        False,
+    ),
     "XINGYUNGEPT": TrackerDefinition(
         "XINGYUNGEPT",
         "cookies",

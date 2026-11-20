@@ -181,6 +181,7 @@ This branch introduces new media categories and automation features not present 
 | <img src="docs/assets/trackers/ulcx.png" width="16" height="16" />                   | ULCX                   | ULCX                   | MOVIE, TV                    |
 |                                                                                            | Unwalled               | UNWALLED               | PODCAST                      |
 | <img src="docs/assets/trackers/utopia.png" width="16" height="16" />                 | UTOPIA                 | UTOPIA                 | MOVIE, TV                    |
+| <img src="docs/assets/trackers/vultu.png" width="16" height="16" />                  | Vultu                  | VULTU                  | MOVIE, TV, GAME, MUSIC       |
 | <img src="docs/assets/trackers/yuscene.png" width="16" height="16" />                | YUSCENE                | YUSCENE                | MOVIE, TV, BOOK, GAME, MUSIC |
 | <img src="docs/assets/trackers/zenith.png" width="16" height="16" />                 | Zenith                 | ZENITH                 | MOVIE, TV, BOOK, GAME, MUSIC |
 

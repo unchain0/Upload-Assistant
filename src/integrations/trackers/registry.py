@@ -113,6 +113,7 @@ from src.integrations.trackers.USENET.drunkenslug import DrunkenSlug
 from src.integrations.trackers.USENET.nzbgeek import NZBGeek
 from src.integrations.trackers.USENET.nzbnest import NzbNest
 from src.integrations.trackers.USENET.suio import Suio
+from src.integrations.trackers.vultu import Vultu
 
 JsonDict = dict[str, Any]
 example_config: dict[str, Any]
@@ -2460,6 +2461,7 @@ tracker_class_map: dict[str, Any] = {
     "ULCX": ULCX,
     "UNWALLED": Unwalled,
     "UTOPIA": Utopia,
+    "VULTU": Vultu,
     "YUSCENE": YUSCENE,
     "ZENITH": Zenith,
 }

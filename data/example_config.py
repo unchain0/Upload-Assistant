@@ -2872,6 +2872,12 @@ config: dict[str, Any] = {
             "add_audio_spectrogram": True,
             "inject_delay": 0,
         },
+        "VULTU": {
+            "link_dir_name": "",
+            "api_key": "",
+            "anon": False,
+            "inject_delay": 0,
+        },
         "XINGYUNGEPT": {
             # Instead of using the tracker acronym for folder name when sym/hard linking, you can use a custom name
             "link_dir_name": "",
