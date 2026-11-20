@@ -1008,6 +1008,47 @@ class DupeChecker:
     def _tv_episode_filter_enabled(ctx: _DupeFilterContext) -> bool:
         return ctx.meta.category == "TV" and bool(ctx.target_episode)
 
+    @staticmethod
+    def _normalize_season_pack_title(value: str) -> str:
+        decomposed = unicodedata.normalize("NFKD", value.casefold())
+        without_marks = "".join(
+            character
+            for character in decomposed
+            if not unicodedata.combining(character)
+        )
+        return re.sub(r"[\W_]+", " ", without_marks).strip()
+
+    @classmethod
+    def _season_pack_title_matches(
+        cls, ctx: _DupeFilterContext, release_name: str
+    ) -> bool:
+        title = cls._normalize_season_pack_title(str(ctx.meta.title or ""))
+        name = cls._normalize_season_pack_title(release_name)
+        if not title or ctx.target_season_number is None:
+            return False
+        return bool(
+            re.match(
+                rf"^{re.escape(title)}(?:\s+(?:19|20)\d{{2}})?\s+s0*{ctx.target_season_number}(?=\s|$)",
+                name,
+            )
+        )
+
+    @classmethod
+    async def _same_group_season_pack_matches(
+        cls, ctx: _DupeFilterContext, release_name: str
+    ) -> bool:
+        if not all((ctx.is_tv_pack, bool(ctx.release_group))):
+            return False
+        normalized_name = await cls.normalize_filename(release_name)
+        matches, is_season = await cls.is_season_episode_match(
+            normalized_name, ctx.target_season, None
+        )
+        if not all(
+            (matches, is_season, cls._same_release_group(ctx, release_name))
+        ):
+            return False
+        return cls._season_pack_title_matches(ctx, release_name)
+
     @classmethod
     def _season_pack_decision(
         cls,
@@ -1331,6 +1372,10 @@ class DupeChecker:
         exact = await self._exact_only_decision(ctx, entry)
         if exact is not None:
             return exact
+        if await self._same_group_season_pack_matches(
+            ctx, str(entry.get("name", ""))
+        ):
+            return None
         return self._size_tolerance_decision(ctx, entry)
 
     @classmethod
@@ -1711,7 +1756,9 @@ class DupeChecker:
     ) -> ExclusionDecision:
         if cls._skip_resolution_check(ctx):
             return None
-        if cls._resolution_mismatch(ctx, state):
+        if cls._resolution_mismatch(
+            ctx, state
+        ) and not await cls._same_group_season_pack_matches(ctx, state.name):
             cls._log_exclusion(
                 ctx,
                 f"resolution '{ctx.target_resolution}' mismatch",

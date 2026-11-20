@@ -11,6 +11,7 @@ import pytest
 from src.domain_models.release import Meta
 from src.services import duplicate_check_service as duplicate_service
 from src.services.duplicate_check_service import DupeChecker
+from src.services.upload_decision_service import UploadHelper
 
 
 def _media(
@@ -331,6 +332,111 @@ def test_duplicate_filter_matrix_never_terminates_process(
     assert attempted == len(categories) * len(trackers)
     assert process_terminations == []
     assert all(":" in rejection for rejection in semantic_rejections)
+
+
+def test_tv_season_pack_same_group_survives_resolution_filter(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        checker = DupeChecker(_config())
+        pack = _meta(
+            tmp_path,
+            category="TV",
+            title="Fiction: Café Society",
+            name="Fiction Cafe Society S01 1080p WEB-DL-GROUP",
+            uuid="Fiction.Cafe.Society.S01.1080p.WEB-DL-GROUP",
+            season="S01",
+            episode=None,
+            tv_pack=True,
+            resolution="1080p",
+            tag="-GROUP",
+            unattended=True,
+            dupe=False,
+        )
+        same_group_lower_resolution = _entry(
+            "Fiction.Cafe.Society.S01.720p.WEB-DL-GROUP",
+            files=["Fiction.Cafe.Society.S01E01.720p.WEB-DL-GROUP.mkv"],
+            file_count=1,
+            res="720p",
+            size=80,
+        )
+        underscore_title_same_group = _entry(
+            "Fiction_Cafe_Society_S01_720p_WEB-DL-GROUP",
+            files=["Fiction_Cafe_Society_S01E01_720p_WEB-DL-GROUP.mkv"],
+            file_count=1,
+            res="720p",
+            size=80,
+        )
+        other_group_lower_resolution = _entry(
+            "Fiction Cafe Society S01 720p WEB-DL-OTHER",
+            files=["Fiction.Cafe.Society.S01E01.720p.WEB-DL-OTHER.mkv"],
+            file_count=1,
+            res="720p",
+        )
+        other_series_same_group = _entry(
+            "Other Fiction Cafe Society S01 720p WEB-DL-GROUP",
+            files=["Other.Fiction.Cafe.Society.S01E01.720p.WEB-DL-GROUP.mkv"],
+            file_count=1,
+            res="720p",
+        )
+        subtitle_variant_same_group = _entry(
+            "Fiction Cafe Society: Origins S01 720p WEB-DL-GROUP",
+            files=[
+                "Fiction.Cafe.Society.Origins.S01E01.720p.WEB-DL-GROUP.mkv"
+            ],
+            file_count=1,
+            res="720p",
+            size=80,
+        )
+        returns_variant_same_group = _entry(
+            "Fiction Cafe Society Returns S01 720p WEB-DL-GROUP",
+            files=[
+                "Fiction.Cafe.Society.Returns.S01E01.720p.WEB-DL-GROUP.mkv"
+            ],
+            file_count=1,
+            res="720p",
+            size=80,
+        )
+        same_group_source_mismatch = _entry(
+            "Fiction Cafe Society S01 720p BluRay-GROUP",
+            files=["Fiction.Cafe.Society.S01E01.720p.BluRay-GROUP.mkv"],
+            file_count=1,
+            res="720p",
+        )
+        same_group_hdr_mismatch = _entry(
+            "Fiction Cafe Society S01 720p WEB-DL HDR-GROUP",
+            files=["Fiction.Cafe.Society.S01E01.720p.WEB-DL.HDR-GROUP.mkv"],
+            file_count=1,
+            flags=["HDR"],
+            res="720p",
+        )
+
+        filtered = await checker.filter_dupes(
+            [
+                same_group_lower_resolution,
+                underscore_title_same_group,
+                other_group_lower_resolution,
+                other_series_same_group,
+                subtitle_variant_same_group,
+                returns_variant_same_group,
+                same_group_source_mismatch,
+                same_group_hdr_mismatch,
+            ],
+            pack,
+            "SAMARITANO",
+        )
+
+        assert [entry["name"] for entry in filtered] == [
+            same_group_lower_resolution["name"],
+            underscore_title_same_group["name"],
+        ]
+        helper = UploadHelper(_config())
+        assert await helper.dupe_check(filtered, pack, "SAMARITANO") == (
+            True,
+            pack,
+        )
+
+    asyncio.run(exercise())
 
 
 def test_tv_season_pack_luminarr_and_internal_trump_paths(
