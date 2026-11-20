@@ -1010,32 +1010,30 @@ class DupeChecker:
 
     @staticmethod
     def _season_pack_title_matches(
-        ctx: _DupeFilterContext, state: _PreparedDupe
+        ctx: _DupeFilterContext, release_name: str
     ) -> bool:
         title = re.sub(r"[^\w]+", " ", str(ctx.meta.title or "").casefold())
-        name = re.sub(r"[^\w]+", " ", state.name.casefold())
+        name = re.sub(r"[^\w]+", " ", release_name.casefold())
         return bool(
             title.strip()
-            and re.search(rf"(?<!\w){re.escape(title.strip())}(?!\w)", name)
+            and re.match(rf"^{re.escape(title.strip())}(?=\s|$)", name)
         )
 
     @classmethod
     async def _same_group_season_pack_matches(
-        cls, ctx: _DupeFilterContext, state: _PreparedDupe
+        cls, ctx: _DupeFilterContext, release_name: str
     ) -> bool:
         if not all((ctx.is_tv_pack, bool(ctx.release_group))):
             return False
+        normalized_name = await cls.normalize_filename(release_name)
         matches, is_season = await cls.is_season_episode_match(
-            state.normalized, ctx.target_season, None
+            normalized_name, ctx.target_season, None
         )
         if not all(
-            (matches, is_season, cls._same_release_group(ctx, state.name))
+            (matches, is_season, cls._same_release_group(ctx, release_name))
         ):
             return False
-        if not cls._season_pack_title_matches(ctx, state):
-            return False
-        cls._remember_match(ctx, state, "same_group_season_pack")
-        return True
+        return cls._season_pack_title_matches(ctx, release_name)
 
     @classmethod
     def _season_pack_decision(
@@ -1360,6 +1358,10 @@ class DupeChecker:
         exact = await self._exact_only_decision(ctx, entry)
         if exact is not None:
             return exact
+        if await self._same_group_season_pack_matches(
+            ctx, str(entry.get("name", ""))
+        ):
+            return None
         return self._size_tolerance_decision(ctx, entry)
 
     @classmethod
@@ -1742,7 +1744,7 @@ class DupeChecker:
             return None
         if cls._resolution_mismatch(
             ctx, state
-        ) and not await cls._same_group_season_pack_matches(ctx, state):
+        ) and not await cls._same_group_season_pack_matches(ctx, state.name):
             cls._log_exclusion(
                 ctx,
                 f"resolution '{ctx.target_resolution}' mismatch",

@@ -358,6 +358,7 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
             files=["Fiction.Mystery.Files.S01E01.720p.WEB-DL-GROUP.mkv"],
             file_count=1,
             res="720p",
+            size=80,
         )
         other_group_lower_resolution = _entry(
             "Fiction Mystery Files S01 720p WEB-DL-OTHER",
@@ -366,8 +367,8 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
             res="720p",
         )
         other_series_same_group = _entry(
-            "Other Fixture S01 720p WEB-DL-GROUP",
-            files=["Other.Fixture.S01E01.720p.WEB-DL-GROUP.mkv"],
+            "Other Fiction Mystery Files S01 720p WEB-DL-GROUP",
+            files=["Other.Fiction.Mystery.Files.S01E01.720p.WEB-DL-GROUP.mkv"],
             file_count=1,
             res="720p",
         )
