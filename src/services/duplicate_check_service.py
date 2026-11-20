@@ -1012,8 +1012,8 @@ class DupeChecker:
     def _season_pack_title_matches(
         ctx: _DupeFilterContext, release_name: str
     ) -> bool:
-        title = re.sub(r"[^\w]+", " ", str(ctx.meta.title or "").casefold())
-        name = re.sub(r"[^\w]+", " ", release_name.casefold())
+        title = re.sub(r"[\W_]+", " ", str(ctx.meta.title or "").casefold())
+        name = re.sub(r"[\W_]+", " ", release_name.casefold())
         if not title.strip() or ctx.target_season_number is None:
             return False
         return bool(

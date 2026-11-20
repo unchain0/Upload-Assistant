@@ -360,6 +360,13 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
             res="720p",
             size=80,
         )
+        underscore_title_same_group = _entry(
+            "Fiction_Mystery_Files_S01_720p_WEB-DL-GROUP",
+            files=["Fiction_Mystery_Files_S01E01_720p_WEB-DL-GROUP.mkv"],
+            file_count=1,
+            res="720p",
+            size=80,
+        )
         other_group_lower_resolution = _entry(
             "Fiction Mystery Files S01 720p WEB-DL-OTHER",
             files=["Fiction.Mystery.Files.S01E01.720p.WEB-DL-OTHER.mkv"],
@@ -398,6 +405,7 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
         filtered = await checker.filter_dupes(
             [
                 same_group_lower_resolution,
+                underscore_title_same_group,
                 other_group_lower_resolution,
                 other_series_same_group,
                 subtitle_variant_same_group,
@@ -409,7 +417,8 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
         )
 
         assert [entry["name"] for entry in filtered] == [
-            same_group_lower_resolution["name"]
+            same_group_lower_resolution["name"],
+            underscore_title_same_group["name"],
         ]
         helper = UploadHelper(_config())
         assert await helper.dupe_check(filtered, pack, "SAMARITANO") == (
