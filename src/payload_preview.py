@@ -24,8 +24,13 @@ from typing import Any, Literal, cast
 from rich.markup import escape
 
 from src import webui_events
-from src.console import PromptBlockedError, logger
-from src.meta import Meta
+from src.domain_models.errors import OperationAbortedError
+from src.domain_models.release import Meta
+from src.integrations.observability.runtime_support import logger
+
+
+class PromptBlockedError(OperationAbortedError):
+    """A preview deferred an interactive value until upload time."""
 
 Kind = Literal["text", "choice", "flag", "readonly", "deferred"]
 

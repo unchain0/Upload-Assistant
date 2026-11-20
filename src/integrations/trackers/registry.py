@@ -81,6 +81,7 @@ from src.integrations.trackers.UNIT3D.locadora import Locadora
 from src.integrations.trackers.UNIT3D.lst import LST
 from src.integrations.trackers.UNIT3D.luminarr import Luminarr
 from src.integrations.trackers.UNIT3D.midnightscene import MidnightScene
+from src.integrations.trackers.UNIT3D.nightbloom import Nightbloom
 from src.integrations.trackers.UNIT3D.nordicquality import NordicQuality
 from src.integrations.trackers.UNIT3D.oldtoonsworld import OldToonsWorld
 from src.integrations.trackers.UNIT3D.onlyencodes import OnlyEncodes
@@ -2414,6 +2415,7 @@ tracker_class_map: dict[str, Any] = {
     "MAKINGOFF": MakingOff,
     "MIDNIGHTSCENE": MidnightScene,
     "MTEAM": MTeam,
+    "NIGHTBLOOM": Nightbloom,
     "NEBULANCE": Nebulance,
     "NORDICQUALITY": NordicQuality,
     "ONLYENCODES": OnlyEncodes,

@@ -423,6 +423,8 @@ def test_imdb_info_rich_payload(
     ]
     assert result["sound_mixes"] == ["Dolby Digital"]
     assert result["original_language"] == "pt"
+    assert _Client.calls[0]["headers"] == imdb.IMDB_GRAPHQL_HEADERS
+    assert imdb.IMDB_GRAPHQL_HEADERS["x-imdb-client-name"] == "imdb-web-next"
     assert cache.set_calls and cache.set_calls[-1][0][-1] == result
 
 

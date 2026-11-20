@@ -142,9 +142,13 @@ def _newznab_item_dupe(
     guid, size_text = _newznab_attributes(
         item, guid, size_text, use_guid_attr_as_id=use_guid_attr_as_id
     )
+    generated_link = _needs_torrent_url_prefix(
+        str(item.findtext("link") or guid), guid, torrent_url
+    )
     item_link = _newznab_item_link(item, guid, torrent_url)
     return {
         "name": title,
+        "id": guid if generated_link else None,
         "files": title,
         "size": int(size_text) if size_text.isdigit() else 0,
         "link": item_link,

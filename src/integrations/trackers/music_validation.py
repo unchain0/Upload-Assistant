@@ -2,12 +2,30 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar
 
 from src.domain_models.music import AudioTrack, MusicRelease
+
+_LAME_PRESETS = (
+    (re.compile(r"^-V\s*0\b"), "V0 (VBR)"),
+    (re.compile(r"^-V\s*1\b"), "V1 (VBR)"),
+    (re.compile(r"^-V\s*2\b"), "V2 (VBR)"),
+    (re.compile(r"--(?:alt-)?preset\s+(?:fast\s+)?extreme\b"), "APX (VBR)"),
+    (re.compile(r"--(?:alt-)?preset\s+(?:fast\s+)?standard\b"), "APS (VBR)"),
+    (re.compile(r"--(?:alt-)?preset\s+insane\b"), "320"),
+)
+
+
+def lame_preset(settings: str) -> str | None:
+    value = settings.strip()
+    return next(
+        (label for pattern, label in _LAME_PRESETS if pattern.search(value)),
+        None,
+    )
 
 
 class ValidationLevel(StrEnum):

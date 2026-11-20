@@ -5,6 +5,11 @@ from typing import Any
 import cli_ui
 
 from src.domain_models.release import Meta
+from src.domain_models.video_title_builder import (
+    BLU_EDITION_TERMS,
+    VideoNameRules,
+    build_video_name,
+)
 from src.integrations.image_hosts.rehosting import (
     ImageHostPolicy,
     RehostImagesManager,
@@ -15,6 +20,12 @@ from src.integrations.trackers.description_builder import DescriptionBuilder
 from src.integrations.trackers.UNIT3D import UNIT3D
 
 Config = dict[str, Any]
+STC_NAME_RULES = VideoNameRules(
+    language_slot="before_audio",
+    english_dub_only=True,
+    edition_terms=BLU_EDITION_TERMS,
+    honor_manual_year_on_tv=True,
+)
 
 
 class SkipTheCommercials(UNIT3D):
@@ -43,6 +54,10 @@ class SkipTheCommercials(UNIT3D):
         self.config: Config = config
         self.common = Common(config)
         self.rehost_images_manager = RehostImagesManager(config)
+
+    async def get_name(self, meta: Meta) -> dict[str, str]:
+        name = build_video_name(meta, STC_NAME_RULES)
+        return {"name": name} if name else await super().get_name(meta)
 
     async def get_type_id(
         self,

@@ -25,6 +25,7 @@ guessit_module: Any = cast(Any, guessit)
 GuessitFn = Callable[[str, dict[str, Any] | None], dict[str, Any]]
 IMDB_GRAPHQL_HEADERS = {
     "Content-Type": "application/json",
+    "x-imdb-client-name": "imdb-web-next",
     "Referer": "https://www.imdb.com/",
 }
 

@@ -309,6 +309,8 @@ class _ScreenshotContext:
     process_limit: int
     screens_per_row: int
     multi_screens: int
+    pack_mediainfo: bool
+    disc_bdinfo: bool
 
 
 @dataclass
@@ -2383,11 +2385,12 @@ class DescriptionBuilder:
         approved_image_hosts: Sequence[str],
         images: list[Any],
         multi_screens: int,
+        disc_bdinfo: bool,
     ) -> str:
         if not enabled:
             return ""
         return await self._handle_discs_and_screenshots(
-            meta, approved_image_hosts, images, multi_screens
+            meta, approved_image_hosts, images, multi_screens, disc_bdinfo
         )
 
     async def _spectrogram_part(self, meta: Meta, enabled: bool) -> str:
@@ -2456,6 +2459,7 @@ class DescriptionBuilder:
         approved_image_hosts: Sequence[str] | None = None,
         signature: str = "",
         desc_header: str = "",
+        disc_bdinfo: bool = True,
     ) -> str:
         require_book_description(meta)
         images, multi_screens = self._description_image_state(meta)
@@ -2494,6 +2498,7 @@ class DescriptionBuilder:
                 approved_hosts,
                 screenshot_images,
                 multi_screens,
+                disc_bdinfo,
             )
         )
         parts.append(await self._spectrogram_part(meta, audio_spectrogram))
@@ -2672,6 +2677,7 @@ class DescriptionBuilder:
         meta: Meta,
         approved_image_hosts: Sequence[str],
         multi_screens: int,
+        disc_bdinfo: bool = True,
     ) -> _ScreenshotContext:
         try:
             screenheader = await self.screenshot_header(meta)
@@ -2689,6 +2695,9 @@ class DescriptionBuilder:
             process_limit=self._get_int_config("processLimit", 10),
             screens_per_row=await self.get_screens_per_row(),
             multi_screens=multi_screens,
+            pack_mediainfo=self._get_bool_config("pack_mediainfo", False)
+            and not meta.sorted_filelist,
+            disc_bdinfo=disc_bdinfo,
         )
 
     @staticmethod
@@ -2980,8 +2989,12 @@ class DescriptionBuilder:
         )
 
     @staticmethod
-    def _additional_disc_details(disc: dict[str, Any]) -> str:
+    def _additional_disc_details(
+        disc: dict[str, Any], *, include_bdinfo: bool = True
+    ) -> str:
         if disc.get("type") == "BDMV":
+            if not include_bdinfo:
+                return f"{disc.get('name', 'BDINFO')}\n\n"
             return f"[spoiler={disc.get('name', 'BDINFO')}][code]{disc.get('summary', '')}[/code][/spoiler]\n\n"
         if disc.get("type") != "DVD":
             return ""
@@ -3050,7 +3063,11 @@ class DescriptionBuilder:
         key = f"new_images_disc_{index}"
         self._restore_pack_images(meta, key, context)
         details = (
-            "[center]" + self._additional_disc_details(disc) + "[/center]\n\n"
+            "[center]"
+            + self._additional_disc_details(
+                disc, include_bdinfo=context.disc_bdinfo
+            )
+            + "[/center]\n\n"
         )
         existing = self._normalized_image_records(meta.get(key, []))
         if existing:
@@ -3343,7 +3360,7 @@ class DescriptionBuilder:
         context: _ScreenshotContext,
         char_count: int,
     ) -> str:
-        if context.multi_screens == 0:
+        if context.multi_screens == 0 and not context.pack_mediainfo:
             return ""
         filename = self._description_filename(file_path)
         if index > 0 and char_count < context.char_limit:
@@ -3409,7 +3426,7 @@ class DescriptionBuilder:
         context: _ScreenshotContext,
     ) -> None:
         should_open = (
-            context.multi_screens != 0
+            (context.multi_screens != 0 or context.pack_mediainfo)
             and index >= context.file_limit
             and not state.spoiler_open
         )
@@ -3525,11 +3542,15 @@ class DescriptionBuilder:
         approved_image_hosts: Sequence[str],
         images: list[dict[str, str]],
         multi_screens: int,
+        disc_bdinfo: bool = True,
     ) -> str:
-        if not images:
+        if not images and not (
+            self._get_bool_config("pack_mediainfo", False)
+            and not meta.sorted_filelist
+        ):
             return ""
         context = await self._screenshot_context(
-            meta, approved_image_hosts, multi_screens
+            meta, approved_image_hosts, multi_screens, disc_bdinfo
         )
         image_values = cast(list[Any], images)
         if meta.category == "GAME":
@@ -3983,18 +4004,17 @@ class DescriptionBuilder:
 
     @staticmethod
     def _format_speedapp_description(description: str, bbcode: BBCODE) -> str:
-        description = bbcode.remove_img_resize(description)
-        description = bbcode.convert_named_spoiler_to_normal_spoiler(
-            description
+        description = re.sub(
+            r"\[img=(\d+)(?:x\d+)?\]",
+            r"[img width=\1]",
+            description,
+            flags=re.IGNORECASE,
         )
         description = (
             description.replace("[note]", "Note: ")
             .replace("[/note]", "")
-            .replace("[code]", "")
-            .replace("[/code]", "")
             .replace("[*]", "• ")
         )
-        description = bbcode.remove_spoiler(description)
         return bbcode.remove_list(description)
 
     @staticmethod
@@ -4068,8 +4088,376 @@ class DescriptionBuilder:
         description = description.replace("[ol]", "").replace("[/ol]", "")
         return bbcode.convert_comparison_to_collapse(description, 1000)
 
+    @staticmethod
+    def _video_tags_to_links(description: str) -> str:
+        description = re.sub(
+            r"\[(?:youtube|video)\]\s*([\w-]{11})\s*\[/(?:youtube|video)\]",
+            r"[url]https://www.youtube.com/watch?v=\1[/url]",
+            description,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(
+            r"\[(?:youtube|video)\]\s*(https?://[^\[]+?)\s*\[/(?:youtube|video)\]",
+            r"[url]\1[/url]",
+            description,
+            flags=re.IGNORECASE,
+        )
+
+    @staticmethod
+    def _flatten_description_tables(description: str) -> str:
+        description = re.sub(
+            r"(?:\[/t[dh]\]\s*)?\[/tr\]", "\n", description, flags=re.I
+        )
+        return re.sub(r"\[/t[dh]\]\s*", " | ", description, flags=re.I)
+
+    @staticmethod
+    def _format_brasiltracker_renderer(
+        description: str, bbcode: BBCODE
+    ) -> str:
+        description = re.sub(
+            r"\[(/?)(?:collapse|expand)(=[^\]]*)?\]",
+            r"[\1spoiler\2]",
+            description,
+            flags=re.IGNORECASE,
+        )
+        description = bbcode.convert_videos_to_youtube_ids(description)
+        return re.sub(
+            r"\[align=(center|right|left)\](.*?)\[/align\]",
+            r"[\1]\2[/\1]",
+            description,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+    @staticmethod
+    def _format_bjshare_renderer(description: str) -> str:
+        description = re.sub(
+            r"\[(/?)(?:collapse|expand)(=[^\]]*)?\]",
+            r"[\1hide\2]",
+            description,
+            flags=re.IGNORECASE,
+        )
+        description = re.sub(
+            r"\[youtube\]\s*([\w-]{11})\s*\[/youtube\]",
+            r"[youtube]https://www.youtube.com/watch?v=\1[/youtube]",
+            description,
+            flags=re.IGNORECASE,
+        )
+        description = re.sub(
+            r"\[video\]\s*(?!https?://(?:www\.|m\.)?(?:youtube\.com|youtu\.be)/)([^\[]+?)\s*\[/video\]",
+            r"[url]\1[/url]",
+            description,
+            flags=re.IGNORECASE,
+        )
+        return re.sub(
+            r"\[(/?)mediainfo\]",
+            r"[\1pre]",
+            description,
+            flags=re.IGNORECASE,
+        )
+
+    @staticmethod
+    def _format_digitalcore_renderer(description: str) -> str:
+        description = re.sub(
+            r"\[(/?)strike\]", r"[\1s]", description, flags=re.IGNORECASE
+        )
+        description = re.sub(
+            r'\[url="([^"\]]+)"\]',
+            r"[url=\1]",
+            description,
+            flags=re.IGNORECASE,
+        )
+        description = re.sub(
+            r"\[youtube\]\s*([\w-]{11})\s*\[/youtube\]",
+            r"[video]https://www.youtube.com/watch?v=\1[/video]",
+            description,
+            flags=re.IGNORECASE,
+        )
+        description = re.sub(
+            r"\[youtube\]\s*(https?://[^\[]+?)\s*\[/youtube\]",
+            r"[video]\1[/video]",
+            description,
+            flags=re.IGNORECASE,
+        )
+        description = re.sub(
+            r"\[align=center\](.*?)\[/align\]",
+            r"[center]\1[/center]",
+            description,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        return re.sub(
+            r"\[/?(?:align(?:=[^\]]*)?|right|left|indent|user|alert|note|sup|sub)\]",
+            "",
+            description,
+            flags=re.IGNORECASE,
+        )
+
+    @classmethod
+    def _format_greatposterwall_renderer(
+        cls, description: str, bbcode: BBCODE
+    ) -> str:
+        description = re.sub(
+            r"\[url=[^\]]+\]\[img(?:=[^\]]+)?\]([^\[]+)\[/img\]\[/url\]",
+            r"[img]\1[/img]",
+            description,
+            flags=re.IGNORECASE,
+        )
+        description = re.sub(
+            r"\[(/?)(?:collapse|expand)(=[^\]]*)?\]",
+            r"[\1spoiler\2]",
+            description,
+            flags=re.IGNORECASE,
+        )
+        description = cls._video_tags_to_links(description)
+        description = bbcode.convert_to_align(description)
+        return re.sub(
+            r"\[align=left\](.*?)\[/align\]",
+            r"\1",
+            description,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+    @classmethod
+    def _format_hdspace_renderer(cls, description: str, bbcode: BBCODE) -> str:
+        description = bbcode.convert_code_to_pre(description)
+        description = re.sub(
+            r"\[(/?)mediainfo\]", r"[\1pre]", description, flags=re.I
+        )
+        description = re.sub(r"\[h[1-6]\]", "[u][b]", description, flags=re.I)
+        description = re.sub(
+            r"\[/h[1-6]\]", "[/b][/u]", description, flags=re.I
+        )
+        description = bbcode.convert_hex_colors_to_named(description)
+        description = re.sub(
+            r"\[color=#[0-9a-f]{3,6}\](.*?)\[/color\]",
+            r"\1",
+            description,
+            flags=re.I | re.DOTALL,
+        )
+        description = bbcode.clamp_size_tags(description, 7)
+        description = re.sub(
+            r"\[align=center\](.*?)\[/align\]",
+            r"[center]\1[/center]",
+            description,
+            flags=re.I | re.DOTALL,
+        )
+        description = re.sub(r"\[ul\]", "[list]", description, flags=re.I)
+        description = re.sub(r"\[ol\]", "[list=1]", description, flags=re.I)
+        description = re.sub(
+            r"\[/(?:ul|ol)\]", "[/list]", description, flags=re.I
+        )
+        description = re.sub(r"\[li\]", "[*]", description, flags=re.I)
+        description = cls._flatten_description_tables(description)
+        description = cls._video_tags_to_links(description)
+        return re.sub(
+            r"\[/?(?:align(?:=[^\]]*)?|right|left|indent|user|alert|note|hr|s|strike|sup|sub|li|font(?:=[^\]]*)?|table|tr|td|th|spoiler(?:=[^\]]*)?|hide(?:=[^\]]*)?|collapse(?:=[^\]]*)?|expand(?:=[^\]]*)?)\]",
+            "",
+            description,
+            flags=re.I,
+        )
+
+    @classmethod
+    def _format_hdtorrents_renderer(
+        cls, description: str, bbcode: BBCODE
+    ) -> str:
+        description = re.sub(r"[\U00010000-\U0010FFFF]", "", description)
+        description = bbcode.remove_img_resize(description)
+        description = bbcode.convert_code_to_pre(description)
+        description = re.sub(
+            r"\[(/?)mediainfo\]", r"[\1pre]", description, flags=re.I
+        )
+        description = re.sub(
+            r"\[(?:spoiler|hide|collapse|expand)=([^\]]+)\]",
+            lambda match: f"[b]{match.group(1).strip()}[/b]\n[hide]",
+            description,
+            flags=re.I,
+        )
+        description = re.sub(
+            r"\[(/?)(?:spoiler|collapse|expand)\]",
+            r"[\1hide]",
+            description,
+            flags=re.I,
+        )
+        description = re.sub(r"\[h[1-6]\]", "[u][b]", description, flags=re.I)
+        description = re.sub(
+            r"\[/h[1-6]\]", "[/b][/u]", description, flags=re.I
+        )
+        description = re.sub(
+            r"\[color=#([0-9a-f])([0-9a-f])([0-9a-f])\]",
+            lambda match: (
+                "[color=#"
+                + "".join(channel * 2 for channel in match.groups()).lower()
+                + "]"
+            ),
+            description,
+            flags=re.I,
+        )
+        description = bbcode.clamp_size_tags(description, 7)
+        description = re.sub(
+            r'\[url="([^"\]]+)"\]', r"[url=\1]", description, flags=re.I
+        )
+        description = re.sub(
+            r"\[align=(center|right|left)\](.*?)\[/align\]",
+            r"[\1]\2[/\1]",
+            description,
+            flags=re.I | re.DOTALL,
+        )
+        description = re.sub(r"\[li\]", "[*]", description, flags=re.I)
+        description = cls._flatten_description_tables(description)
+        description = cls._video_tags_to_links(description)
+        return re.sub(
+            r"\[/?(?:align(?:=[^\]]*)?|list(?:=[^\]]*)?|ul|ol|li|table|tr|td|th|indent|user|alert|note|hr|s|strike|sup|sub)\]",
+            "",
+            description,
+            flags=re.I,
+        )
+
+    @classmethod
+    def _format_speedapp_renderer(
+        cls, description: str, bbcode: BBCODE
+    ) -> str:
+        description = re.sub(
+            r"\[(/?)mediainfo\]", r"[\1code]", description, flags=re.I
+        )
+        description = re.sub(
+            r"\[(/?)strike\]", r"[\1s]", description, flags=re.I
+        )
+        description = re.sub(
+            r"\[(/?)(?:hide|collapse|expand)(=[^\]]*)?\]",
+            r"[\1spoiler\2]",
+            description,
+            flags=re.I,
+        )
+        description = re.sub(
+            r"\[spoiler=([^\]]*\s[^\]]*)\]",
+            lambda match: f"[b]{match.group(1).strip()}[/b]\n[spoiler]",
+            description,
+            flags=re.I,
+        )
+        description = cls._flatten_description_tables(description)
+        description = re.sub(
+            r"\[/?(?:table|tr|td|th|indent)\]", "", description, flags=re.I
+        )
+        return bbcode.convert_videos_to_youtube_ids(description)
+
+    @classmethod
+    def _format_mteam_renderer(cls, description: str, bbcode: BBCODE) -> str:
+        description = bbcode.convert_comparison_to_centered(description, 1000)
+        description = bbcode.remove_img_resize(description)
+        description = re.sub(
+            r'\[url="([^"\]]+)"\]', r"[url=\1]", description, flags=re.I
+        )
+        description = bbcode.convert_headings_to_sizes(description)
+        description = re.sub(
+            r"\[(/?)strike\]", r"[\1s]", description, flags=re.I
+        )
+        description = re.sub(
+            r"\[(/?)(?:pre|mediainfo)\]", r"[\1code]", description, flags=re.I
+        )
+        description = re.sub(
+            r"\[align=(center|right|left)\](.*?)\[/align\]",
+            r"[\1]\2[/\1]",
+            description,
+            flags=re.I | re.DOTALL,
+        )
+        description = re.sub(
+            r"\[(?:spoiler|hide|collapse|expand)=([^\]]+)\]",
+            lambda match: f"[b]{match.group(1).strip()}[/b]\n",
+            description,
+            flags=re.I,
+        )
+        description = re.sub(
+            r"\[(?:\*|li)\]\s*", "• ", description, flags=re.I
+        )
+        description = re.sub(
+            r"\[/?(?:align(?:=[^\]]*)?|list(?:=[^\]]*)?|ul|ol|li|indent|note|hr|spoiler|hide|collapse|expand)\]",
+            "",
+            description,
+            flags=re.I,
+        )
+        return cls._video_tags_to_links(description)
+
+    @classmethod
+    def _format_torrentleech_renderer(
+        cls, description: str, bbcode: BBCODE
+    ) -> str:
+        description = re.sub(
+            r"\[align=center\](.*?)\[/align\]",
+            r"[center]\1[/center]",
+            description,
+            flags=re.I | re.DOTALL,
+        )
+        description = re.sub(
+            r"\[(/?)h[1-6]\]", r"[\1b]", description, flags=re.I
+        )
+        description = re.sub(r"\[\*\]", "\n[*]", description)
+        description = re.sub(
+            r"\[c\](.*?)\[/c\]",
+            r"[code]\1[/code]",
+            description,
+            flags=re.I | re.DOTALL,
+        )
+        description = re.sub(r"\[hr\]", "---", description, flags=re.I)
+        description = bbcode.remove_img_resize(description)
+        description = re.sub(
+            r"\[quote=[^\]]*\]", "[quote]", description, flags=re.I
+        )
+        description = re.sub(
+            r"\[(/?)strike\]", r"[\1s]", description, flags=re.I
+        )
+        description = re.sub(
+            r"\[th\](.*?)\[/th\]",
+            r"[td][b]\1[/b][/td]",
+            description,
+            flags=re.I | re.DOTALL,
+        )
+        return bbcode.convert_videos_to_youtube_ids(description)
+
+    @staticmethod
+    def _preserve_comparisons(
+        description: str,
+    ) -> tuple[str, list[str]]:
+        comparisons: list[str] = []
+
+        def preserve(match: re.Match[str]) -> str:
+            comparisons.append(match.group(0))
+            return f"\x00COMPARISON{len(comparisons) - 1}\x00"
+
+        return (
+            re.sub(
+                r"\[comparison=[^\]]*\].*?\[/comparison\]",
+                preserve,
+                description,
+                flags=re.IGNORECASE | re.DOTALL,
+            ),
+            comparisons,
+        )
+
     def tracker_specific_formats(self, tracker: str, description: str) -> str:
+        from src.integrations.trackers.registry import api_trackers
+
         bbcode = BBCODE()
+        comparisons: list[str] = []
+        if tracker in api_trackers:
+            description, comparisons = self._preserve_comparisons(description)
+        gazelle_trackers = {
+            "ANTHELION",
+            "BJSHARE",
+            "BRASILTRACKER",
+            "GREATPOSTERWALL",
+        }
+        if tracker in gazelle_trackers:
+            description = bbcode.clamp_size_tags(description)
+            description = bbcode.convert_named_colors(description)
+            description = bbcode.convert_headings_to_sizes(description)
+        if tracker in {"BJSHARE", "BRASILTRACKER"}:
+            description = bbcode.convert_comparison_to_centered(
+                description, 1000
+            )
+            description = bbcode.convert_for_gazelle_parser(description)
+        if tracker == "GREATPOSTERWALL":
+            description = bbcode.convert_for_gazelle_parser(
+                description, supports_hr=True
+            )
         formatters: dict[str, Callable[[str, BBCODE], str]] = {
             "BRASILTRACKER": self._format_brasiltracker_description,
             "BJSHARE": self._format_bjshare_description,
@@ -4088,10 +4476,49 @@ class DescriptionBuilder:
         formatter = formatters.get(tracker)
         if formatter is not None:
             description = formatter(description, bbcode)
-        from src.integrations.trackers.registry import (
-            api_trackers as unit3d_trackers,
-        )
-
-        if tracker in unit3d_trackers:
+        renderer_formatters: dict[str, Callable[[str], str]] = {
+            "BRASILTRACKER": lambda value: self._format_brasiltracker_renderer(
+                value, bbcode
+            ),
+            "BJSHARE": self._format_bjshare_renderer,
+            "DIGITALCORE": self._format_digitalcore_renderer,
+            "GREATPOSTERWALL": lambda value: (
+                self._format_greatposterwall_renderer(value, bbcode)
+            ),
+            "HDSPACE": lambda value: self._format_hdspace_renderer(
+                value, bbcode
+            ),
+            "HDTORRENTS": lambda value: self._format_hdtorrents_renderer(
+                value, bbcode
+            ),
+            "MTEAM": lambda value: self._format_mteam_renderer(value, bbcode),
+            "SPEEDAPP": lambda value: self._format_speedapp_renderer(
+                value, bbcode
+            ),
+            "TORRENTLEECH": lambda value: self._format_torrentleech_renderer(
+                value, bbcode
+            ),
+        }
+        if renderer_formatter := renderer_formatters.get(tracker):
+            description = renderer_formatter(description)
+        if tracker in {
+            "AITHER",
+            "ANTHELION",
+            "BRASILTRACKER",
+            "BJSHARE",
+            "CZTEAM",
+            "FUNFILE",
+            "GREATPOSTERWALL",
+            "IPTORRENTS",
+            "MTEAM",
+            "PTSKIT",
+            "UNIT3D",
+        }:
+            description = bbcode.convert_videos_to_youtube_ids(description)
+        if tracker in api_trackers:
             description = self._format_unit3d_description(description, bbcode)
+            for index, comparison in enumerate(comparisons):
+                description = description.replace(
+                    f"\x00COMPARISON{index}\x00", comparison
+                )
         return bbcode.remove_extra_lines(description)

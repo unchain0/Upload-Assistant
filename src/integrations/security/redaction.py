@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -140,7 +141,14 @@ class Redaction:
         return value
 
     @staticmethod
-    def _redact_string_patterns(value: str) -> str:
+    def _redact_string_patterns(
+        value: str, public_ids: Iterable[object] = ()
+    ) -> str:
+        public = {
+            str(identifier).lower()
+            for identifier in public_ids
+            if identifier not in (None, "")
+        }
         value = re.sub(
             "(?<=/)[a-zA-Z0-9]{10,}(?=/announce)", "[REDACTED]", value
         )
@@ -151,16 +159,28 @@ class Redaction:
             value,
             flags=re.I,
         )
-        return re.sub("\\b[a-fA-F0-9]{32,}\\b", "[REDACTED]", value)
+        return re.sub(
+            r"\b[a-fA-F0-9]{32,}\b",
+            lambda match: (
+                match.group(0)
+                if match.group(0).lower() in public
+                else "[REDACTED]"
+            ),
+            value,
+        )
 
     @staticmethod
-    def redact_value(val: Any, sensitive_keys: set[str] | None = None) -> Any:
-        """Redact sensitive values, including passkeys in URLs and JSON substrings."""
+    def redact_value(
+        val: Any,
+        sensitive_keys: set[str] | None = None,
+        public_ids: Iterable[object] = (),
+    ) -> Any:
+        """Redact secrets while preserving explicitly identified public hashes."""
         if not isinstance(val, str):
             return val
         keys = sensitive_keys or SENSITIVE_KEYS
         value = Redaction._redact_embedded_json(val, keys)
-        return Redaction._redact_string_patterns(value)
+        return Redaction._redact_string_patterns(value, public_ids)
 
     @staticmethod
     def _is_sensitive_key(key: str, sensitive_keys: set[str]) -> bool:

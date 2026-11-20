@@ -4,6 +4,7 @@ from typing import Any
 from src.domain_models.release import Meta
 from src.integrations.observability.runtime_support import logger
 from src.integrations.trackers.common import Common
+from src.integrations.trackers.description_builder import DescriptionBuilder
 from src.integrations.trackers.UNIT3D import UNIT3D
 
 
@@ -30,6 +31,36 @@ class AsianCinema(UNIT3D):
         super().__init__(config, tracker_name="ASIANCINEMA")
         self.config = config
         self.common = Common(config)
+
+    @staticmethod
+    def _multi_disc_bdinfo(meta: Meta) -> list[str]:
+        if meta.is_disc != "BDMV" or not meta.discs:
+            return []
+        summaries = [
+            str(disc.get("summary", "")).strip()
+            for disc in meta.discs
+            if disc.get("type") == "BDMV"
+            and str(disc.get("summary", "")).strip()
+        ]
+        return summaries if len(summaries) > 1 else []
+
+    async def get_bdinfo(self, meta: Meta) -> dict[str, str]:
+        summaries = self._multi_disc_bdinfo(meta)
+        if not meta.bdinfo or not summaries:
+            return await super().get_bdinfo(meta)
+        return {"bdinfo": "\n\n".join(summaries)}
+
+    async def get_description(self, meta: Meta) -> dict[str, str]:
+        return {
+            "description": await DescriptionBuilder(
+                self.tracker, self.config
+            ).general_description_generator(
+                meta,
+                mediainfo=False,
+                nfo=False,
+                disc_bdinfo=not bool(self._multi_disc_bdinfo(meta)),
+            )
+        }
 
     async def get_additional_checks(self, meta: Meta) -> bool:
         asia = [

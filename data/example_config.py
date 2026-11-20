@@ -334,6 +334,7 @@ config: dict[str, Any] = {
         # This setting also affects PASSTHEPOPCORN, however PASSTHEPOPCORN requires at least 2 images for each.
         # PASSTHEPOPCORN will always use a *minimum* of 2, regardless of what is set here.
         "multiScreens": "2",
+        "pack_mediainfo": False,
         # The next options for packed content do not effect PASSTHEPOPCORN. PASSTHEPOPCORN has a set standard.
         # When uploading packs, you can specify a different screenshot thumbnail size, default 300.
         "pack_thumb_size": "300",
@@ -1808,6 +1809,13 @@ config: dict[str, Any] = {
             "link_dir_name": "",
             "api_key": "",
             "announce_url": "",
+            "inject_delay": 0,
+        },
+        "NIGHTBLOOM": {
+            "link_dir_name": "",
+            "api_key": "",
+            "announce_url": "",
+            "anon": True,
             "inject_delay": 0,
         },
         "NORDICQUALITY": {

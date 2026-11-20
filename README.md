@@ -142,6 +142,7 @@ This branch introduces new media categories and automation features not present 
 | <img src="docs/assets/trackers/midnightscene.png" width="16" height="16" />          | MidnightScene          | MIDNIGHTSCENE          | MOVIE, TV, GAME, MUSIC       |
 | <img src="docs/assets/trackers/mteam.png" width="16" height="16" />                  | M-Team                 | MTEAM                  | MOVIE, TV                    |
 | <img src="docs/assets/trackers/nebulance.png" width="16" height="16" />              | Nebulance              | NEBULANCE              | TV                           |
+| <img src="docs/assets/trackers/nightbloom.png" width="16" height="16" />             | Nightbloom             | NIGHTBLOOM             | MOVIE, TV                    |
 | <img src="docs/assets/trackers/nordicquality.png" width="16" height="16" />          | NordicQuality          | NORDICQUALITY          | MOVIE, TV, MUSIC, BOOK, GAME |
 | <img src="docs/assets/trackers/oldtoonsworld.png" width="16" height="16" />          | OldToonsWorld          | OLDTOONSWORLD          | MOVIE, TV                    |
 | <img src="docs/assets/trackers/onlyencodes.png" width="16" height="16" />            | OnlyEncodes+           | ONLYENCODES            | MOVIE, TV                    |

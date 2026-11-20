@@ -129,7 +129,13 @@ def event_prefix(nonce: str) -> str:
     return f"{GUI_EVENT_STDOUT_PREFIX}{nonce}:"
 
 
-def plain_text(value: Any, limit: int = MAX_TEXT_LENGTH, *, markup: bool = True) -> str:
+def plain_text(
+    value: Any,
+    limit: int = MAX_TEXT_LENGTH,
+    *,
+    markup: bool = True,
+    public_ids: Iterable[object] = (),
+) -> str:
     """Return redacted, markup-free text that is safe to show as plain text."""
     text = _ANSI_ESCAPE.sub("", str(value if value is not None else ""))
     if markup:
@@ -140,17 +146,17 @@ def plain_text(value: Any, limit: int = MAX_TEXT_LENGTH, *, markup: bool = True)
         except Exception:
             text = _MARKUP_TAG.sub("", text)
     try:
-        from src.cogs.redaction import Redaction
+        from src.integrations.security.redaction import Redaction
 
-        text = str(Redaction.redact_value(text))
+        text = str(Redaction.redact_value(text, public_ids=public_ids))
     except Exception:
         return ""
     text = text.strip()
     return text if len(text) <= limit else f"{text[: limit - 1]}…"
 
 
-def _http_link(value: Any) -> str:
-    link = plain_text(value, 2000)
+def _http_link(value: Any, public_ids: Iterable[object] = ()) -> str:
+    link = plain_text(value, 2000, public_ids=public_ids)
     return link if link.lower().startswith(("http://", "https://")) else ""
 
 
@@ -584,7 +590,9 @@ def _release_entries(entries: Iterable[Mapping[str, Any] | str], source_size: in
     seen_links: set[str] = set()
     for entry in entries:
         if isinstance(entry, Mapping):
-            link = _http_link(entry.get("link"))
+            link = _http_link(
+                entry.get("link"), public_ids=(entry.get("id"),)
+            )
             if link and link in seen_links:
                 continue
             if link:
@@ -674,11 +682,13 @@ def tracker_result(
     if not _wants_details() or status not in TRACKER_STATUSES:
         return
     payload: dict[str, Any] = {"tracker": plain_text(tracker, 64), "status": status}
-    url = _http_link(link)
+    url = _http_link(link, public_ids=(torrent_id,))
     if url:
         payload["link"] = url
     if torrent_id not in (None, ""):
-        payload["torrent_id"] = plain_text(torrent_id, 64)
+        payload["torrent_id"] = plain_text(
+            torrent_id, 64, public_ids=(torrent_id,)
+        )
     text = plain_text(message) if message else ""
     if text:
         payload["message"] = text
