@@ -1009,16 +1009,26 @@ class DupeChecker:
         return ctx.meta.category == "TV" and bool(ctx.target_episode)
 
     @staticmethod
+    def _normalize_season_pack_title(value: str) -> str:
+        decomposed = unicodedata.normalize("NFKD", value.casefold())
+        without_marks = "".join(
+            character
+            for character in decomposed
+            if not unicodedata.combining(character)
+        )
+        return re.sub(r"[\W_]+", " ", without_marks).strip()
+
+    @classmethod
     def _season_pack_title_matches(
-        ctx: _DupeFilterContext, release_name: str
+        cls, ctx: _DupeFilterContext, release_name: str
     ) -> bool:
-        title = re.sub(r"[\W_]+", " ", str(ctx.meta.title or "").casefold())
-        name = re.sub(r"[\W_]+", " ", release_name.casefold())
-        if not title.strip() or ctx.target_season_number is None:
+        title = cls._normalize_season_pack_title(str(ctx.meta.title or ""))
+        name = cls._normalize_season_pack_title(release_name)
+        if not title or ctx.target_season_number is None:
             return False
         return bool(
             re.match(
-                rf"^{re.escape(title.strip())}(?:\s+(?:19|20)\d{{2}})?\s+s0*{ctx.target_season_number}(?=\s|$)",
+                rf"^{re.escape(title)}(?:\s+(?:19|20)\d{{2}})?\s+s0*{ctx.target_season_number}(?=\s|$)",
                 name,
             )
         )

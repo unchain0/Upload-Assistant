@@ -342,9 +342,9 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
         pack = _meta(
             tmp_path,
             category="TV",
-            title="Fiction: Mystery Files",
-            name="Fiction Mystery Files S01 1080p WEB-DL-GROUP",
-            uuid="Fiction.Mystery.Files.S01.1080p.WEB-DL-GROUP",
+            title="Fiction: Café Society",
+            name="Fiction Cafe Society S01 1080p WEB-DL-GROUP",
+            uuid="Fiction.Cafe.Society.S01.1080p.WEB-DL-GROUP",
             season="S01",
             episode=None,
             tv_pack=True,
@@ -354,49 +354,49 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
             dupe=False,
         )
         same_group_lower_resolution = _entry(
-            "Fiction.Mystery.Files.S01.720p.WEB-DL-GROUP",
-            files=["Fiction.Mystery.Files.S01E01.720p.WEB-DL-GROUP.mkv"],
+            "Fiction.Cafe.Society.S01.720p.WEB-DL-GROUP",
+            files=["Fiction.Cafe.Society.S01E01.720p.WEB-DL-GROUP.mkv"],
             file_count=1,
             res="720p",
             size=80,
         )
         underscore_title_same_group = _entry(
-            "Fiction_Mystery_Files_S01_720p_WEB-DL-GROUP",
-            files=["Fiction_Mystery_Files_S01E01_720p_WEB-DL-GROUP.mkv"],
+            "Fiction_Cafe_Society_S01_720p_WEB-DL-GROUP",
+            files=["Fiction_Cafe_Society_S01E01_720p_WEB-DL-GROUP.mkv"],
             file_count=1,
             res="720p",
             size=80,
         )
         other_group_lower_resolution = _entry(
-            "Fiction Mystery Files S01 720p WEB-DL-OTHER",
-            files=["Fiction.Mystery.Files.S01E01.720p.WEB-DL-OTHER.mkv"],
+            "Fiction Cafe Society S01 720p WEB-DL-OTHER",
+            files=["Fiction.Cafe.Society.S01E01.720p.WEB-DL-OTHER.mkv"],
             file_count=1,
             res="720p",
         )
         other_series_same_group = _entry(
-            "Other Fiction Mystery Files S01 720p WEB-DL-GROUP",
-            files=["Other.Fiction.Mystery.Files.S01E01.720p.WEB-DL-GROUP.mkv"],
+            "Other Fiction Cafe Society S01 720p WEB-DL-GROUP",
+            files=["Other.Fiction.Cafe.Society.S01E01.720p.WEB-DL-GROUP.mkv"],
             file_count=1,
             res="720p",
         )
         subtitle_variant_same_group = _entry(
-            "Fiction Mystery Files: Origins S01 720p WEB-DL-GROUP",
+            "Fiction Cafe Society: Origins S01 720p WEB-DL-GROUP",
             files=[
-                "Fiction.Mystery.Files.Origins.S01E01.720p.WEB-DL-GROUP.mkv"
+                "Fiction.Cafe.Society.Origins.S01E01.720p.WEB-DL-GROUP.mkv"
             ],
             file_count=1,
             res="720p",
             size=80,
         )
         same_group_source_mismatch = _entry(
-            "Fiction Mystery Files S01 720p BluRay-GROUP",
-            files=["Fiction.Mystery.Files.S01E01.720p.BluRay-GROUP.mkv"],
+            "Fiction Cafe Society S01 720p BluRay-GROUP",
+            files=["Fiction.Cafe.Society.S01E01.720p.BluRay-GROUP.mkv"],
             file_count=1,
             res="720p",
         )
         same_group_hdr_mismatch = _entry(
-            "Fiction Mystery Files S01 720p WEB-DL HDR-GROUP",
-            files=["Fiction.Mystery.Files.S01E01.720p.WEB-DL.HDR-GROUP.mkv"],
+            "Fiction Cafe Society S01 720p WEB-DL HDR-GROUP",
+            files=["Fiction.Cafe.Society.S01E01.720p.WEB-DL.HDR-GROUP.mkv"],
             file_count=1,
             flags=["HDR"],
             res="720p",
