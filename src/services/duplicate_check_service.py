@@ -1008,35 +1008,34 @@ class DupeChecker:
     def _tv_episode_filter_enabled(ctx: _DupeFilterContext) -> bool:
         return ctx.meta.category == "TV" and bool(ctx.target_episode)
 
-    @classmethod
-    async def _season_pack_title_matches(
-        cls, ctx: _DupeFilterContext, state: _PreparedDupe
+    @staticmethod
+    def _season_pack_title_matches(
+        ctx: _DupeFilterContext, state: _PreparedDupe
     ) -> bool:
-        title = await cls.normalize_filename(str(ctx.meta.title or ""))
+        title = re.sub(r"[^\w]+", " ", str(ctx.meta.title or "").casefold())
+        name = re.sub(r"[^\w]+", " ", state.name.casefold())
         return bool(
-            title
-            and re.search(
-                rf"(?<!\w){re.escape(title)}(?!\w)", state.normalized
-            )
+            title.strip()
+            and re.search(rf"(?<!\w){re.escape(title.strip())}(?!\w)", name)
         )
 
     @classmethod
-    async def _same_group_season_pack_decision(
+    async def _same_group_season_pack_matches(
         cls, ctx: _DupeFilterContext, state: _PreparedDupe
-    ) -> ExclusionDecision:
+    ) -> bool:
         if not all((ctx.is_tv_pack, bool(ctx.release_group))):
-            return None
+            return False
         matches, is_season = await cls.is_season_episode_match(
             state.normalized, ctx.target_season, None
         )
         if not all(
             (matches, is_season, cls._same_release_group(ctx, state.name))
         ):
-            return None
-        if not await cls._season_pack_title_matches(ctx, state):
-            return None
+            return False
+        if not cls._season_pack_title_matches(ctx, state):
+            return False
         cls._remember_match(ctx, state, "same_group_season_pack")
-        return False
+        return True
 
     @classmethod
     def _season_pack_decision(
@@ -1078,11 +1077,6 @@ class DupeChecker:
     async def _tv_initial_decision(
         cls, ctx: _DupeFilterContext, state: _PreparedDupe
     ) -> ExclusionDecision:
-        season_pack_decision = await cls._same_group_season_pack_decision(
-            ctx, state
-        )
-        if season_pack_decision is not None:
-            return season_pack_decision
         if not cls._tv_episode_filter_enabled(ctx):
             return None
         matches, is_season = await cls.is_season_episode_match(
@@ -1746,7 +1740,9 @@ class DupeChecker:
     ) -> ExclusionDecision:
         if cls._skip_resolution_check(ctx):
             return None
-        if cls._resolution_mismatch(ctx, state):
+        if cls._resolution_mismatch(
+            ctx, state
+        ) and not await cls._same_group_season_pack_matches(ctx, state):
             cls._log_exclusion(
                 ctx,
                 f"resolution '{ctx.target_resolution}' mismatch",

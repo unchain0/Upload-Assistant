@@ -342,9 +342,9 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
         pack = _meta(
             tmp_path,
             category="TV",
-            title="Fixture Series",
-            name="Fixture Series S01 1080p WEB-DL-GROUP",
-            uuid="Fixture.Series.S01.1080p.WEB-DL-GROUP",
+            title="Fiction: Mystery Files",
+            name="Fiction Mystery Files S01 1080p WEB-DL-GROUP",
+            uuid="Fiction.Mystery.Files.S01.1080p.WEB-DL-GROUP",
             season="S01",
             episode=None,
             tv_pack=True,
@@ -354,14 +354,14 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
             dupe=False,
         )
         same_group_lower_resolution = _entry(
-            "Fixture Series S01 720p WEB-DL-GROUP",
-            files=["Fixture.Series.S01E01.720p.WEB-DL-GROUP.mkv"],
+            "Fiction.Mystery.Files.S01.720p.WEB-DL-GROUP",
+            files=["Fiction.Mystery.Files.S01E01.720p.WEB-DL-GROUP.mkv"],
             file_count=1,
             res="720p",
         )
         other_group_lower_resolution = _entry(
-            "Fixture Series S01 720p WEB-DL-OTHER",
-            files=["Fixture.Series.S01E01.720p.WEB-DL-OTHER.mkv"],
+            "Fiction Mystery Files S01 720p WEB-DL-OTHER",
+            files=["Fiction.Mystery.Files.S01E01.720p.WEB-DL-OTHER.mkv"],
             file_count=1,
             res="720p",
         )
@@ -371,12 +371,27 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
             file_count=1,
             res="720p",
         )
+        same_group_source_mismatch = _entry(
+            "Fiction Mystery Files S01 720p BluRay-GROUP",
+            files=["Fiction.Mystery.Files.S01E01.720p.BluRay-GROUP.mkv"],
+            file_count=1,
+            res="720p",
+        )
+        same_group_hdr_mismatch = _entry(
+            "Fiction Mystery Files S01 720p WEB-DL HDR-GROUP",
+            files=["Fiction.Mystery.Files.S01E01.720p.WEB-DL.HDR-GROUP.mkv"],
+            file_count=1,
+            flags=["HDR"],
+            res="720p",
+        )
 
         filtered = await checker.filter_dupes(
             [
                 same_group_lower_resolution,
                 other_group_lower_resolution,
                 other_series_same_group,
+                same_group_source_mismatch,
+                same_group_hdr_mismatch,
             ],
             pack,
             "SAMARITANO",
