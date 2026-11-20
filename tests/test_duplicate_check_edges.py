@@ -388,6 +388,15 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
             res="720p",
             size=80,
         )
+        returns_variant_same_group = _entry(
+            "Fiction Cafe Society Returns S01 720p WEB-DL-GROUP",
+            files=[
+                "Fiction.Cafe.Society.Returns.S01E01.720p.WEB-DL-GROUP.mkv"
+            ],
+            file_count=1,
+            res="720p",
+            size=80,
+        )
         same_group_source_mismatch = _entry(
             "Fiction Cafe Society S01 720p BluRay-GROUP",
             files=["Fiction.Cafe.Society.S01E01.720p.BluRay-GROUP.mkv"],
@@ -409,6 +418,7 @@ def test_tv_season_pack_same_group_survives_resolution_filter(
                 other_group_lower_resolution,
                 other_series_same_group,
                 subtitle_variant_same_group,
+                returns_variant_same_group,
                 same_group_source_mismatch,
                 same_group_hdr_mismatch,
             ],
