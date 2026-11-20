@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock
 
+import pytest
+
 from src.domain_models.release import Meta
+from src.integrations.trackers import registry
 from src.integrations.trackers.vultu import Vultu
 
 
@@ -58,3 +61,34 @@ def test_music_upload_requires_an_external_album_id() -> None:
     assert not asyncio.run(
         _tracker().get_additional_checks(Meta(category="MUSIC"))
     )
+
+
+def test_vultu_request_search_uses_its_custom_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = _tracker()
+    requests = [
+        {
+            "Name": "Synthetic request",
+            "Reward": "0",
+            "Link": "https://vultu.invalid/pedidos/1",
+        }
+    ]
+    get_requests = AsyncMock(return_value=requests)
+    monkeypatch.setattr(tracker, "get_requests", get_requests)
+    setup = registry.TrackerSetup({"DEFAULT": {}, "TRACKERS": {"VULTU": {}}})
+    monkeypatch.setitem(
+        registry.tracker_class_map, "VULTU", lambda _config: tracker
+    )
+    generic_search = AsyncMock(
+        side_effect=AssertionError("generic dispatch used")
+    )
+    monkeypatch.setattr(setup, "get_tracker_requests", generic_search)
+
+    result = asyncio.run(
+        setup._process_tracker_request(Meta(category="MUSIC"), "VULTU")
+    )
+
+    assert result is False
+    get_requests.assert_awaited_once()
+    generic_search.assert_not_awaited()

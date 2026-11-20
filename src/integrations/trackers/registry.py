@@ -1253,6 +1253,7 @@ class TrackerSetup:
             "PRIVATEHD",
             "MTEAM",
             "ORPHEUS",
+            "VULTU",
         }
         if tracker_name not in custom_trackers:
             return None

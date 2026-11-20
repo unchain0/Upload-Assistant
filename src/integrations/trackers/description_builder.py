@@ -4432,20 +4432,22 @@ class DescriptionBuilder:
             comparisons,
         )
 
-    def tracker_specific_formats(self, tracker: str, description: str) -> str:
-        from src.integrations.trackers.registry import api_trackers
-
-        bbcode = BBCODE()
+    def _prepare_tracker_format(
+        self,
+        tracker: str,
+        description: str,
+        bbcode: BBCODE,
+        api_trackers: set[str],
+    ) -> tuple[str, list[str]]:
         comparisons: list[str] = []
         if tracker in api_trackers:
             description, comparisons = self._preserve_comparisons(description)
-        gazelle_trackers = {
+        if tracker in {
             "ANTHELION",
             "BJSHARE",
             "BRASILTRACKER",
             "GREATPOSTERWALL",
-        }
-        if tracker in gazelle_trackers:
+        }:
             description = bbcode.clamp_size_tags(description)
             description = bbcode.convert_named_colors(description)
             description = bbcode.convert_headings_to_sizes(description)
@@ -4458,6 +4460,11 @@ class DescriptionBuilder:
             description = bbcode.convert_for_gazelle_parser(
                 description, supports_hr=True
             )
+        return description, comparisons
+
+    def _apply_tracker_formatter(
+        self, tracker: str, description: str, bbcode: BBCODE
+    ) -> str:
         formatters: dict[str, Callable[[str, BBCODE], str]] = {
             "BRASILTRACKER": self._format_brasiltracker_description,
             "BJSHARE": self._format_bjshare_description,
@@ -4474,9 +4481,12 @@ class DescriptionBuilder:
             "IMMORTALSEED": self._format_immortalseed_description,
         }
         formatter = formatters.get(tracker)
-        if formatter is not None:
-            description = formatter(description, bbcode)
-        renderer_formatters: dict[str, Callable[[str], str]] = {
+        return formatter(description, bbcode) if formatter else description
+
+    def _apply_renderer_formatter(
+        self, tracker: str, description: str, bbcode: BBCODE
+    ) -> str:
+        formatters: dict[str, Callable[[str], str]] = {
             "BRASILTRACKER": lambda value: self._format_brasiltracker_renderer(
                 value, bbcode
             ),
@@ -4499,8 +4509,17 @@ class DescriptionBuilder:
                 value, bbcode
             ),
         }
-        if renderer_formatter := renderer_formatters.get(tracker):
-            description = renderer_formatter(description)
+        formatter = formatters.get(tracker)
+        return formatter(description) if formatter else description
+
+    def _finalize_tracker_format(
+        self,
+        tracker: str,
+        description: str,
+        bbcode: BBCODE,
+        api_trackers: set[str],
+        comparisons: list[str],
+    ) -> str:
         if tracker in {
             "AITHER",
             "ANTHELION",
@@ -4522,3 +4541,20 @@ class DescriptionBuilder:
                     f"\x00COMPARISON{index}\x00", comparison
                 )
         return bbcode.remove_extra_lines(description)
+
+    def tracker_specific_formats(self, tracker: str, description: str) -> str:
+        from src.integrations.trackers.registry import api_trackers
+
+        bbcode = BBCODE()
+        description, comparisons = self._prepare_tracker_format(
+            tracker, description, bbcode, api_trackers
+        )
+        description = self._apply_tracker_formatter(
+            tracker, description, bbcode
+        )
+        description = self._apply_renderer_formatter(
+            tracker, description, bbcode
+        )
+        return self._finalize_tracker_format(
+            tracker, description, bbcode, api_trackers, comparisons
+        )
