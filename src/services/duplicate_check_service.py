@@ -1009,6 +1009,36 @@ class DupeChecker:
         return ctx.meta.category == "TV" and bool(ctx.target_episode)
 
     @classmethod
+    async def _season_pack_title_matches(
+        cls, ctx: _DupeFilterContext, state: _PreparedDupe
+    ) -> bool:
+        title = await cls.normalize_filename(str(ctx.meta.title or ""))
+        return bool(
+            title
+            and re.search(
+                rf"(?<!\w){re.escape(title)}(?!\w)", state.normalized
+            )
+        )
+
+    @classmethod
+    async def _same_group_season_pack_decision(
+        cls, ctx: _DupeFilterContext, state: _PreparedDupe
+    ) -> ExclusionDecision:
+        if not all((ctx.is_tv_pack, bool(ctx.release_group))):
+            return None
+        matches, is_season = await cls.is_season_episode_match(
+            state.normalized, ctx.target_season, None
+        )
+        if not all(
+            (matches, is_season, cls._same_release_group(ctx, state.name))
+        ):
+            return None
+        if not await cls._season_pack_title_matches(ctx, state):
+            return None
+        cls._remember_match(ctx, state, "same_group_season_pack")
+        return False
+
+    @classmethod
     def _season_pack_decision(
         cls,
         ctx: _DupeFilterContext,
@@ -1048,6 +1078,11 @@ class DupeChecker:
     async def _tv_initial_decision(
         cls, ctx: _DupeFilterContext, state: _PreparedDupe
     ) -> ExclusionDecision:
+        season_pack_decision = await cls._same_group_season_pack_decision(
+            ctx, state
+        )
+        if season_pack_decision is not None:
+            return season_pack_decision
         if not cls._tv_episode_filter_enabled(ctx):
             return None
         matches, is_season = await cls.is_season_episode_match(

@@ -11,6 +11,7 @@ import pytest
 from src.domain_models.release import Meta
 from src.services import duplicate_check_service as duplicate_service
 from src.services.duplicate_check_service import DupeChecker
+from src.services.upload_decision_service import UploadHelper
 
 
 def _media(
@@ -331,6 +332,66 @@ def test_duplicate_filter_matrix_never_terminates_process(
     assert attempted == len(categories) * len(trackers)
     assert process_terminations == []
     assert all(":" in rejection for rejection in semantic_rejections)
+
+
+def test_tv_season_pack_same_group_survives_resolution_filter(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        checker = DupeChecker(_config())
+        pack = _meta(
+            tmp_path,
+            category="TV",
+            title="Fixture Series",
+            name="Fixture Series S01 1080p WEB-DL-GROUP",
+            uuid="Fixture.Series.S01.1080p.WEB-DL-GROUP",
+            season="S01",
+            episode=None,
+            tv_pack=True,
+            resolution="1080p",
+            tag="-GROUP",
+            unattended=True,
+            dupe=False,
+        )
+        same_group_lower_resolution = _entry(
+            "Fixture Series S01 720p WEB-DL-GROUP",
+            files=["Fixture.Series.S01E01.720p.WEB-DL-GROUP.mkv"],
+            file_count=1,
+            res="720p",
+        )
+        other_group_lower_resolution = _entry(
+            "Fixture Series S01 720p WEB-DL-OTHER",
+            files=["Fixture.Series.S01E01.720p.WEB-DL-OTHER.mkv"],
+            file_count=1,
+            res="720p",
+        )
+        other_series_same_group = _entry(
+            "Other Fixture S01 720p WEB-DL-GROUP",
+            files=["Other.Fixture.S01E01.720p.WEB-DL-GROUP.mkv"],
+            file_count=1,
+            res="720p",
+        )
+
+        filtered = await checker.filter_dupes(
+            [
+                same_group_lower_resolution,
+                other_group_lower_resolution,
+                other_series_same_group,
+            ],
+            pack,
+            "SAMARITANO",
+        )
+
+        assert [entry["name"] for entry in filtered] == [
+            same_group_lower_resolution["name"]
+        ]
+        helper = UploadHelper(_config())
+        assert await helper.dupe_check(filtered, pack, "SAMARITANO") == (
+            True,
+            pack,
+        )
+
+    asyncio.run(exercise())
 
 
 def test_tv_season_pack_luminarr_and_internal_trump_paths(
