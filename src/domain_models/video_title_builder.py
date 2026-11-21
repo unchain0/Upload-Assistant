@@ -50,7 +50,9 @@ class NameComponents:
 class VideoNameRules:
     """How one tracker title differs from the shared video template."""
 
-    language_slot: Literal["", "before_cut", "before_resolution"] = ""
+    language_slot: Literal[
+        "", "before_cut", "before_resolution", "before_audio"
+    ] = ""
     english_dub_only: bool = False
     keep_multi: bool = False
     dual_audio_label: str = "Dual-Audio"
@@ -116,7 +118,9 @@ def _component_episode_title(meta: Meta) -> str:
 
 def _edition_without_hybrid(edition: object) -> str:
     return " ".join(
-        re.sub(r"\bhybrid\b", " ", str(edition or ""), flags=re.IGNORECASE).split()
+        re.sub(
+            r"\bhybrid\b", " ", str(edition or ""), flags=re.IGNORECASE
+        ).split()
     )
 
 
@@ -224,9 +228,7 @@ def _chosen_title(title: str, fallback: str) -> str:
     return title or fallback
 
 
-def _chosen_alt(
-    title: str, aka: str, no_aka: bool, current: str
-) -> str:
+def _chosen_alt(title: str, aka: str, no_aka: bool, current: str) -> str:
     if title:
         return _imdb_alt(aka, title, no_aka)
     return current
@@ -242,7 +244,9 @@ def with_imdb_title(meta: Meta, components: NameComponents) -> NameComponents:
     return replace(
         components,
         title=new_title,
-        alt_title=_chosen_alt(title, aka, bool(meta.no_aka), components.alt_title),
+        alt_title=_chosen_alt(
+            title, aka, bool(meta.no_aka), components.alt_title
+        ),
         year=_imdb_year(meta, components.year, year),
     )
 
@@ -300,11 +304,16 @@ def _dub_audio(
 
 def _audio_for_rules(meta: Meta, audio: str, rules: VideoNameRules) -> str:
     label, _, codec = audio.partition(" ")
-    if label not in {"Dual-Audio", "MULTI"} or not codec:
-        return audio
-    if not rules.english_dub_only:
-        return _renamed_dual(label, codec, rules)
-    return _dub_audio(meta, label, codec, rules)
+    if label in {"Dual-Audio", "MULTI"} and codec:
+        audio = (
+            _dub_audio(meta, label, codec, rules)
+            if rules.english_dub_only
+            else _renamed_dual(label, codec, rules)
+        )
+    if rules.language_slot == "before_audio":
+        language = _foreign_language_name(meta)
+        return f"{language} {audio}" if language else audio
+    return audio
 
 
 def _cut_from_edition(edition: str, rules: VideoNameRules) -> str:
@@ -384,7 +393,9 @@ def _dvd_details(
 def _web_details(
     meta: Meta, parts: NameComponents, rules: VideoNameRules, language: str
 ) -> list[str]:
-    hybrid = parts.hybrid if rules.hybrid_on_webdl or parts.type != "WEBDL" else ""
+    hybrid = (
+        parts.hybrid if rules.hybrid_on_webdl or parts.type != "WEBDL" else ""
+    )
     web_type = "WEB-DL" if parts.type == "WEBDL" else "WEBRip"
     return [
         hybrid,
@@ -418,7 +429,9 @@ def _encode_details(
     ]
 
 
-def _remux_codec(meta: Meta, parts: NameComponents, rules: VideoNameRules) -> str:
+def _remux_codec(
+    meta: Meta, parts: NameComponents, rules: VideoNameRules
+) -> str:
     if parts.source in DVD_SOURCES and not rules.dvd_video_codec:
         return ""
     return _name_text(meta.video_codec)
@@ -559,6 +572,11 @@ def build_video_name(
         meta, rules, _tvdb_year_override(meta, rules, parts.year)
     )
     fields = _title_fields(
-        meta, parts, rules, language, year, _cut_from_edition(parts.edition, rules)
+        meta,
+        parts,
+        rules,
+        language,
+        year,
+        _cut_from_edition(parts.edition, rules),
     )
     return _join_title([*fields, *details], parts.tag)

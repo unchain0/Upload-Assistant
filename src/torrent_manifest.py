@@ -1,0 +1,287 @@
+"""Manifest-backed storage for reusable per-release torrent hashes."""
+
+from __future__ import annotations
+
+import json
+import threading
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Literal, TypeIs, cast
+
+from torf import TorfError, Torrent
+
+from src.temp_paths import release_temp_dir
+from src.torrent_policy import PIECE_SIZE_MAX, TorrentPolicy, TorrentStats
+
+TorrentLayout = Literal["base", "base_subs"]
+
+
+def _is_str_dict(val: object) -> TypeIs[dict[str, Any]]:
+    return isinstance(val, dict)
+
+
+@dataclass(frozen=True)
+class TorrentEntry:
+    id: str
+    file: str
+    layout: TorrentLayout
+    origin: str
+    infohash: str
+    piece_size: int
+    piece_count: int
+    content_size: int
+    metainfo_size: int
+    client_infohash: str | None = None
+
+    @property
+    def stats(self) -> TorrentStats:
+        return TorrentStats(self.piece_size, self.piece_count, self.content_size, self.metainfo_size)
+
+
+_locks: dict[str, threading.RLock] = {}
+_locks_guard = threading.Lock()
+
+
+class TorrentManifest:
+    VERSION = 1
+
+    def __init__(self, base_dir: str | Path | None, release_id: str) -> None:
+        self.root = release_temp_dir(base_dir, release_id)
+        self.path = self.root / "torrent_manifest.json"
+        key = str(self.path.resolve()).casefold()
+        with _locks_guard:
+            self._lock = _locks.setdefault(key, threading.RLock())
+
+    def _empty(self) -> dict[str, Any]:
+        return {"version": self.VERSION, "torrents": {}, "defaults": {}, "selections": {}}
+
+    def clear(self) -> None:
+        with self._lock:
+            self._save(self._empty())
+
+    def _load(self) -> dict[str, Any]:
+        try:
+            value: object = json.loads(self.path.read_text(encoding="utf-8"))
+        except OSError, json.JSONDecodeError:
+            return self._empty()
+        if not _is_str_dict(value) or value.get("version") != self.VERSION:
+            return self._empty()
+        for key in ("torrents", "defaults", "selections"):
+            if not _is_str_dict(value.get(key)):
+                value[key] = {}
+        return value
+
+    def _save(self, value: dict[str, Any]) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
+        temporary.replace(self.path)
+
+    def _resolve(self, relative: str) -> Path:
+        path = (self.root / relative).resolve()
+        if self.root.resolve() not in path.parents:
+            raise ValueError(f"Torrent manifest path escapes release directory: {relative}")
+        return path
+
+    @staticmethod
+    def _normalize(source: str | Path) -> Torrent:
+        torrent = Torrent.read(source)
+        torrent.trackers = ["https://fake.tracker"]
+        torrent.comment = "Upload-Assistant (fork)"
+        torrent.created_by = "Upload-Assistant (fork)"
+        info = torrent.metainfo["info"]
+        valid_info = {"name", "piece length", "pieces", "private", "source", "files", "length"}
+        for key in list(info):
+            if key not in valid_info:
+                info.pop(key, None)
+        valid_root = {
+            "announce",
+            "comment",
+            "creation date",
+            "created by",
+            "encoding",
+            "info",
+            "imdb",
+            "tmdb",
+            "tvdb",
+            "tvmaze",
+            "mal",
+            "douban",
+            "igdb",
+            "asin",
+            "isbn",
+        }
+        for key in list(torrent.metainfo):
+            if key not in valid_root:
+                torrent.metainfo.pop(key, None)
+        torrent.source = "L4G"
+        torrent.private = True
+        return torrent
+
+    def register(self, source: str | Path, layout: TorrentLayout, origin: str, *, make_default: bool = False, client_infohash: str | None = None) -> TorrentEntry:
+        with self._lock:
+            torrent = self._normalize(source)
+            infohash = str(torrent.infohash)
+            entry_id = f"{layout}:{infohash}"
+            relative = Path("torrents") / str(int(torrent.piece_size)) / f"{infohash}.torrent"
+            output = self._resolve(relative.as_posix())
+            manifest = self._load()
+            torrents = cast(dict[str, Any], manifest["torrents"])
+            # Re-registering a managed base must retain its original client
+            # identity, rather than treating the normalized hash as a client hash.
+            previous: object = torrents.get(entry_id)
+            if Path(source).resolve() == output and _is_str_dict(previous):
+                origin = str(previous.get("origin", origin))
+                prev_hash = previous.get("client_infohash")
+                client_infohash = prev_hash if isinstance(prev_hash, str) else None
+            output.parent.mkdir(parents=True, exist_ok=True)
+            temporary = output.with_suffix(".tmp")
+            Torrent.copy(torrent).write(temporary, overwrite=True)
+            temporary.replace(output)
+            stats = TorrentStats.from_path(output)
+            entry = TorrentEntry(
+                id=entry_id,
+                file=relative.as_posix(),
+                layout=layout,
+                origin=origin,
+                infohash=infohash,
+                piece_size=stats.piece_size,
+                piece_count=stats.piece_count,
+                content_size=stats.content_size,
+                metainfo_size=stats.metainfo_size,
+                client_infohash=client_infohash,
+            )
+            torrents[entry_id] = asdict(entry)
+            defaults = cast(dict[str, Any], manifest["defaults"])
+            # A default that no client can load gives way to the first usable variant.
+            if make_default or layout not in defaults or (stats.piece_size <= PIECE_SIZE_MAX and self._is_oversized(torrents.get(defaults[layout]))):
+                defaults[layout] = entry_id
+            self._save(manifest)
+            return entry
+
+    def entries(self, layout: TorrentLayout | None = None) -> list[TorrentEntry]:
+        manifest = self._load()
+        result: list[TorrentEntry] = []
+        for value in cast(dict[str, Any], manifest["torrents"]).values():
+            if not _is_str_dict(value):
+                continue
+            try:
+                entry = TorrentEntry(**value)
+                path = self._resolve(entry.file)
+            except TypeError, ValueError:
+                continue
+            if not path.is_file():
+                continue
+            try:
+                torrent = Torrent.read(path)
+                current = TorrentStats(
+                    piece_size=int(torrent.piece_size or 0),
+                    piece_count=int(torrent.pieces or 0),
+                    content_size=int(torrent.size or 0),
+                    metainfo_size=path.stat().st_size,
+                )
+            except OSError, TorfError, TypeError, ValueError:
+                continue
+            if current != entry.stats or str(torrent.infohash) != entry.infohash:
+                continue
+            if layout is None or entry.layout == layout:
+                result.append(entry)
+        return result
+
+    def entry_path(self, entry: TorrentEntry) -> Path:
+        return self._resolve(entry.file)
+
+    def entry_for_path(self, path: str | Path) -> TorrentEntry | None:
+        resolved = Path(path).resolve()
+        return next((entry for entry in self.entries() if self.entry_path(entry).resolve() == resolved), None)
+
+    def select(
+        self,
+        tracker: str,
+        layout: TorrentLayout,
+        policy: TorrentPolicy | None = None,
+        *,
+        preferred: Sequence[str | Path | None] = (),
+    ) -> TorrentEntry | None:
+        """Record and return the variant a tracker uploads.
+
+        The first ``preferred`` path that is an acceptable variant wins, so a
+        tracker keeps the torrent already chosen for the run. Only when none
+        qualifies, such as a tracker policy rejecting it, is the smallest
+        acceptable variant used.
+
+        Without a tracker policy the largest supported piece size still
+        applies, so a variant libtorrent 1.x clients cannot load is never selected.
+        """
+        candidates = [entry for entry in self.entries(layout) if (policy.accepts(entry.stats) if policy is not None else entry.piece_size <= PIECE_SIZE_MAX)]
+        if not candidates:
+            # Drop a selection recorded by an earlier run, so a variant that is
+            # no longer acceptable cannot be picked up through selected_path().
+            with self._lock:
+                manifest = self._load()
+                if cast(dict[str, Any], manifest["selections"]).pop(tracker.upper(), None) is not None:
+                    self._save(manifest)
+            return None
+        candidates.sort(key=lambda entry: (entry.piece_size, entry.metainfo_size, entry.id))
+        by_path = {self.entry_path(entry).resolve(): entry for entry in candidates}
+        entry = next((by_path[path] for item in preferred if item and (path := Path(item).resolve()) in by_path), candidates[0])
+        with self._lock:
+            manifest = self._load()
+            cast(dict[str, Any], manifest["selections"])[tracker.upper()] = entry.id
+            self._save(manifest)
+        return entry
+
+    def selected_path(self, tracker: str) -> Path | None:
+        manifest = self._load()
+        entry_id = cast(dict[str, Any], manifest["selections"]).get(tracker.upper())
+        if not isinstance(entry_id, str):
+            return None
+        value: object = cast(dict[str, Any], manifest["torrents"]).get(entry_id)
+        if not _is_str_dict(value):
+            return None
+        try:
+            entry = TorrentEntry(**value)
+            path = self.entry_path(entry)
+        except TypeError, ValueError:
+            return None
+        return path if path.is_file() else None
+
+    def default_path(self, layout: TorrentLayout = "base") -> Path | None:
+        manifest = self._load()
+        entry_id = cast(dict[str, Any], manifest["defaults"]).get(layout)
+        if not isinstance(entry_id, str):
+            return None
+        value: object = cast(dict[str, Any], manifest["torrents"]).get(entry_id)
+        if not _is_str_dict(value):
+            return None
+        if self._is_oversized(value):
+            # Left by a run from before the piece-size bound: every step that
+            # copies the default, such as randomized torrents, must get a
+            # variant a client can load, or none at all.
+            replacement = self._promote_usable_default(layout)
+            if replacement is None:
+                return None
+            value = asdict(replacement)
+        try:
+            path = self.entry_path(TorrentEntry(**value))
+        except TypeError, ValueError:
+            return None
+        return path if path.is_file() else None
+
+    @staticmethod
+    def _is_oversized(value: object) -> bool:
+        piece_size = value.get("piece_size") if _is_str_dict(value) else None
+        return isinstance(piece_size, int) and piece_size > PIECE_SIZE_MAX
+
+    def _promote_usable_default(self, layout: TorrentLayout) -> TorrentEntry | None:
+        """Make the largest variant within the piece-size bound the default."""
+        with self._lock:
+            usable = [entry for entry in self.entries(layout) if entry.piece_size <= PIECE_SIZE_MAX]
+            if not usable:
+                return None
+            chosen = max(usable, key=lambda entry: (entry.piece_size, -entry.metainfo_size, entry.id))
+            manifest = self._load()
+            cast(dict[str, Any], manifest["defaults"])[layout] = chosen.id
+            self._save(manifest)
+            return chosen

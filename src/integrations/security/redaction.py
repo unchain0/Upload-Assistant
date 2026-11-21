@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -11,6 +12,9 @@ from typing import Any, cast
 import aiofiles
 
 from src.domain_models.release import Meta
+
+_ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_MARKUP_TAG = re.compile(r"\[/?[a-zA-Z#][^\[\]]*\]|\[/\]")
 
 SENSITIVE_KEYS: set[str] = {
     "token",
@@ -105,6 +109,30 @@ class PathAwareEncoder(json.JSONEncoder):
         return super().default(o)
 
 
+def plain_text(
+    value: Any,
+    limit: int = 1000,
+    *,
+    markup: bool = True,
+    public_ids: Iterable[object] = (),
+) -> str:
+    """Return bounded plain text with private values redacted for display."""
+    text = _ANSI_ESCAPE.sub("", str(value if value is not None else ""))
+    if markup:
+        try:
+            from rich.text import Text
+
+            text = Text.from_markup(text).plain
+        except Exception:
+            text = _MARKUP_TAG.sub("", text)
+    try:
+        text = str(Redaction.redact_value(text, public_ids=public_ids))
+    except Exception:
+        return ""
+    text = text.strip()
+    return text if len(text) <= limit else f"{text[: limit - 1]}…"
+
+
 class Redaction:
     @staticmethod
     def extract_json_blocks(text: str) -> list[tuple[int, int]]:
@@ -140,7 +168,14 @@ class Redaction:
         return value
 
     @staticmethod
-    def _redact_string_patterns(value: str) -> str:
+    def _redact_string_patterns(
+        value: str, public_ids: Iterable[object] = ()
+    ) -> str:
+        public = {
+            str(identifier).lower()
+            for identifier in public_ids
+            if identifier not in (None, "")
+        }
         value = re.sub(
             "(?<=/)[a-zA-Z0-9]{10,}(?=/announce)", "[REDACTED]", value
         )
@@ -151,16 +186,28 @@ class Redaction:
             value,
             flags=re.I,
         )
-        return re.sub("\\b[a-fA-F0-9]{32,}\\b", "[REDACTED]", value)
+        return re.sub(
+            r"\b[a-fA-F0-9]{32,}\b",
+            lambda match: (
+                match.group(0)
+                if match.group(0).lower() in public
+                else "[REDACTED]"
+            ),
+            value,
+        )
 
     @staticmethod
-    def redact_value(val: Any, sensitive_keys: set[str] | None = None) -> Any:
-        """Redact sensitive values, including passkeys in URLs and JSON substrings."""
+    def redact_value(
+        val: Any,
+        sensitive_keys: set[str] | None = None,
+        public_ids: Iterable[object] = (),
+    ) -> Any:
+        """Redact secrets while preserving explicitly identified public hashes."""
         if not isinstance(val, str):
             return val
         keys = sensitive_keys or SENSITIVE_KEYS
         value = Redaction._redact_embedded_json(val, keys)
-        return Redaction._redact_string_patterns(value)
+        return Redaction._redact_string_patterns(value, public_ids)
 
     @staticmethod
     def _is_sensitive_key(key: str, sensitive_keys: set[str]) -> bool:

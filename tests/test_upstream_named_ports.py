@@ -29,16 +29,19 @@ from src.integrations.media.scene_detection import (
     SceneManager,
 )
 from src.integrations.media.screenshot_capture import (
-    _VideoCapturePlan,
     _capture_task_arguments,
     _missing_screenshot_indices,
     _png_is_complete,
+    _VideoCapturePlan,
 )
+from src.integrations.trackers.beyondhd import BEYONDHD
+from src.integrations.trackers.registry import tracker_class_map
 from src.integrations.trackers.UNIT3D.capybarabr import CapybaraBR
 from src.integrations.trackers.UNIT3D.homiehelpdesk import HomieHelpDesk
 from src.integrations.trackers.UNIT3D.onlyencodes import OnlyEncodes
-from src.integrations.trackers.beyondhd import BEYONDHD
-from src.integrations.trackers.registry import tracker_class_map
+from src.integrations.trackers.UNIT3D.skipthecommercials import (
+    SkipTheCommercials,
+)
 from src.services.config_sync import sync_user_config
 
 
@@ -94,6 +97,34 @@ def test_onlyencodes_name_comes_from_components() -> None:
     assert name.endswith("-GROUP")
 
 
+def test_skipthecommercials_name_places_foreign_audio_language_before_codec() -> (
+    None
+):
+    tracker = SkipTheCommercials(
+        {"DEFAULT": {}, "TRACKERS": {"SKIPTHECOMMERCIALS": {}}}
+    )
+    meta = Meta(
+        category="TV",
+        title="Synthetic Show",
+        season="S01",
+        type="WEBDL",
+        source="WEB",
+        resolution="1080p",
+        service="NF",
+        audio="DD+ 5.1",
+        audio_languages=["French"],
+        original_language="fr",
+        video_encode="H.264",
+        tag="-TESTGROUP",
+        imdb_info={},
+    )
+
+    name = asyncio.run(tracker.get_name(meta))["name"]
+
+    assert "WEB-DL FRENCH DD+ 5.1" in name
+    assert name.endswith("-TESTGROUP")
+
+
 def test_incomplete_png_is_recaptured_at_its_own_index(tmp_path: Path) -> None:
     good = tmp_path / "Show-1.png"
     bad = tmp_path / "Show-0.png"
@@ -105,7 +136,9 @@ def test_incomplete_png_is_recaptured_at_its_own_index(tmp_path: Path) -> None:
     assert _missing_screenshot_indices(tmp_path, "Show", 2, False) == [0]
 
 
-def test_capture_tasks_use_missing_indices_not_a_prefix(tmp_path: Path) -> None:
+def test_capture_tasks_use_missing_indices_not_a_prefix(
+    tmp_path: Path,
+) -> None:
     meta = Meta(category="MOVIE", retake=False)
     plan = _VideoCapturePlan(
         path="video.mkv",
@@ -185,7 +218,7 @@ def test_samaritano_posts_to_the_sharex_endpoint(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        async def __aenter__(self) -> "Client":
+        async def __aenter__(self) -> Client:
             return self
 
         async def __aexit__(self, *_args: object) -> None:
@@ -232,7 +265,7 @@ def test_thrimg_posts_to_torrenthr(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             return None
 
-        async def __aenter__(self) -> "Client":
+        async def __aenter__(self) -> Client:
             return self
 
         async def __aexit__(self, *_args: object) -> None:
@@ -500,7 +533,9 @@ def test_srrdb_archived_file_rules(
     _run_unattended_scene(tmp_path, monkeypatch, path, case)
 
 
-def test_config_sync_adds_missing_keys_without_replacing_values(tmp_path: Path) -> None:
+def test_config_sync_adds_missing_keys_without_replacing_values(
+    tmp_path: Path,
+) -> None:
     example = tmp_path / "example.py"
     user = tmp_path / "config.py"
     example.write_text(

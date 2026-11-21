@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import copy
+from typing import Any
+
+import pytest
 
 from data.example_config import config as example_config
 from src.domain_models.release import Meta
+from src.integrations.trackers.description_builder import DescriptionBuilder
 from src.integrations.trackers.UNIT3D.asiancinema import AsianCinema
 
 
@@ -15,6 +19,63 @@ def _config() -> dict:
     tracker.setdefault("api_key", "test-key")
     tracker.setdefault("announce_url", "https://tracker.invalid/announce")
     return config
+
+
+def test_asiancinema_uses_every_disc_summary_for_multi_disc_bdinfo() -> None:
+    tracker = AsianCinema(_config())
+    meta = Meta(
+        is_disc="BDMV",
+        bdinfo=True,
+        discs=[
+            {"type": "BDMV", "summary": "Disc one"},
+            {"type": "BDMV", "summary": "Disc two"},
+            {"type": "DVD", "summary": "Other format"},
+        ],
+    )
+
+    assert asyncio.run(tracker.get_bdinfo(meta)) == {
+        "bdinfo": "Disc one\n\nDisc two"
+    }
+
+
+def test_asiancinema_suppresses_extra_disc_summaries_in_description(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = AsianCinema(_config())
+    meta = Meta(
+        is_disc="BDMV",
+        bdinfo=True,
+        discs=[
+            {"type": "BDMV", "summary": "Disc one"},
+            {"type": "BDMV", "summary": "Disc two"},
+        ],
+    )
+    calls: list[dict[str, Any]] = []
+
+    async def render(
+        _self: DescriptionBuilder, _meta: Meta, **options: Any
+    ) -> str:
+        calls.append(options)
+        return "description"
+
+    monkeypatch.setattr(
+        DescriptionBuilder, "general_description_generator", render
+    )
+
+    assert asyncio.run(tracker.get_description(meta)) == {
+        "description": "description"
+    }
+    assert calls[0]["disc_bdinfo"] is False
+
+
+def test_asiancinema_does_not_combine_a_single_disc_summary() -> None:
+    meta = Meta(
+        is_disc="BDMV",
+        bdinfo=True,
+        discs=[{"type": "BDMV", "summary": "Disc one"}],
+    )
+
+    assert AsianCinema._multi_disc_bdinfo(meta) == []
 
 
 def test_asiancinema_allows_asian_origin() -> None:

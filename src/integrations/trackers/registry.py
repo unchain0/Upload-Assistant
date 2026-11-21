@@ -81,6 +81,7 @@ from src.integrations.trackers.UNIT3D.locadora import Locadora
 from src.integrations.trackers.UNIT3D.lst import LST
 from src.integrations.trackers.UNIT3D.luminarr import Luminarr
 from src.integrations.trackers.UNIT3D.midnightscene import MidnightScene
+from src.integrations.trackers.UNIT3D.nightbloom import Nightbloom
 from src.integrations.trackers.UNIT3D.nordicquality import NordicQuality
 from src.integrations.trackers.UNIT3D.oldtoonsworld import OldToonsWorld
 from src.integrations.trackers.UNIT3D.onlyencodes import OnlyEncodes
@@ -112,6 +113,7 @@ from src.integrations.trackers.USENET.drunkenslug import DrunkenSlug
 from src.integrations.trackers.USENET.nzbgeek import NZBGeek
 from src.integrations.trackers.USENET.nzbnest import NzbNest
 from src.integrations.trackers.USENET.suio import Suio
+from src.integrations.trackers.vultu import Vultu
 
 JsonDict = dict[str, Any]
 example_config: dict[str, Any]
@@ -1252,6 +1254,7 @@ class TrackerSetup:
             "PRIVATEHD",
             "MTEAM",
             "ORPHEUS",
+            "VULTU",
         }
         if tracker_name not in custom_trackers:
             return None
@@ -2414,6 +2417,7 @@ tracker_class_map: dict[str, Any] = {
     "MAKINGOFF": MakingOff,
     "MIDNIGHTSCENE": MidnightScene,
     "MTEAM": MTeam,
+    "NIGHTBLOOM": Nightbloom,
     "NEBULANCE": Nebulance,
     "NORDICQUALITY": NordicQuality,
     "ONLYENCODES": OnlyEncodes,
@@ -2457,6 +2461,7 @@ tracker_class_map: dict[str, Any] = {
     "ULCX": ULCX,
     "UNWALLED": Unwalled,
     "UTOPIA": Utopia,
+    "VULTU": Vultu,
     "YUSCENE": YUSCENE,
     "ZENITH": Zenith,
 }

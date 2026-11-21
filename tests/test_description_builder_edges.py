@@ -12,6 +12,7 @@ import pytest
 
 from src.domain_models.release import Meta
 from src.integrations.trackers import description_builder
+from src.integrations.trackers.bbcode_formatting import BBCODE
 from src.integrations.trackers.description_builder import (
     DescriptionBuilder,
     gen_desc,
@@ -1449,6 +1450,77 @@ def test_handle_multiple_discs_respects_process_limit(
     assert "new_images_disc_2" not in meta
 
 
+def test_additional_disc_summary_can_be_moved_out_of_description() -> None:
+    disc = {"type": "BDMV", "name": "Disc 2", "summary": "Disc 2 BDInfo"}
+
+    assert DescriptionBuilder._additional_disc_details(disc) == (
+        "[spoiler=Disc 2][code]Disc 2 BDInfo[/code][/spoiler]\n\n"
+    )
+    assert (
+        DescriptionBuilder._additional_disc_details(disc, include_bdinfo=False)
+        == "Disc 2\n\n"
+    )
+
+
+def test_pack_mediainfo_lists_episodes_when_screenshots_are_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = [tmp_path / "Episode 1.mkv", tmp_path / "Episode 2.mkv"]
+    for path in files:
+        path.write_bytes(b"video")
+    builder = _handle_builder(tmp_path, monkeypatch)
+    builder.config["DEFAULT"].update(
+        {"multiScreens": "0", "pack_mediainfo": True}
+    )
+    monkeypatch.setattr(
+        description_builder.MediaInfo,
+        "parse",
+        lambda *_args, **_kwargs: "MEDIAINFO",
+    )
+    meta = _general_meta(
+        tmp_path,
+        uuid="pack-mediainfo",
+        filelist=[str(path) for path in files],
+        sorted_filelist=False,
+    )
+    (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
+
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(meta, ["imgbb.com"], [], 0)
+    )
+
+    assert "Episode 2" in result
+    assert "FORMATTED MEDIAINFO" in result
+    assert "[img=" not in result
+    builder.takescreens_manager.screenshots.assert_not_awaited()
+
+
+def test_pack_mediainfo_is_skipped_for_sorted_file_lists(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    files = [tmp_path / "Episode 1.mkv", tmp_path / "Episode 2.mkv"]
+    for path in files:
+        path.write_bytes(b"video")
+    builder = _handle_builder(tmp_path, monkeypatch)
+    builder.config["DEFAULT"].update(
+        {"multiScreens": "0", "pack_mediainfo": True}
+    )
+    meta = _general_meta(
+        tmp_path,
+        uuid="sorted-pack-mediainfo",
+        filelist=[str(path) for path in files],
+        sorted_filelist=True,
+    )
+    (tmp_path / "tmp" / meta.uuid).mkdir(parents=True)
+
+    result = asyncio.run(
+        builder._handle_discs_and_screenshots(meta, [], [], 0)
+    )
+
+    assert "Episode 2" not in result
+    assert "FORMATTED MEDIAINFO" not in result
+
+
 def test_handle_multiple_files_generation_saved_upload_limits_and_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1550,6 +1622,95 @@ def test_handle_header_error_rows_and_debug_char_count(
         )
     )
     assert "https://raw/1" in result
+
+
+def test_gazelle_parser_conversion_normalizes_unsupported_tags() -> None:
+    description = BBCODE().convert_for_gazelle_parser(
+        "[code]line[/code][strike]old[/strike]"
+        '[url="https://example.invalid"]link[/url]'
+        "[th]heading[/th][li]item[/li][hr]"
+    )
+
+    assert "[pre]line[/pre]" in description
+    assert "[s]old[/s]" in description
+    assert "[url=https://example.invalid]link[/url]" in description
+    assert "[td][b]heading[/b][/td]" in description
+    assert "[*]item" in description
+    assert "[hr]" not in description
+
+
+def test_bbcode_formatters_convert_unsupported_renderer_tags() -> None:
+    builder = _builder("BRASILTRACKER")
+    gazelle = builder.tracker_specific_formats(
+        "BRASILTRACKER",
+        '[strike]old[/strike][url="https://example.invalid"]link[/url]'
+        "[video]https://youtu.be/abcdefghijk[/video]",
+    )
+    digitalcore = builder.tracker_specific_formats(
+        "DIGITALCORE",
+        '[strike]old[/strike][url="https://example.invalid"]link[/url]'
+        "[youtube]abcdefghijk[/youtube]",
+    )
+    greatposterwall = builder.tracker_specific_formats(
+        "GREATPOSTERWALL",
+        "[collapse=Details]text[/collapse]"
+        "[video]https://youtu.be/abcdefghijk[/video]",
+    )
+
+    assert "[s]old[/s]" in gazelle
+    assert "[url=https://example.invalid]link[/url]" in gazelle
+    assert "[youtube]abcdefghijk[/youtube]" in gazelle
+    assert "[s]old[/s]" in digitalcore
+    assert (
+        "[video]https://www.youtube.com/watch?v=abcdefghijk[/video]"
+        in digitalcore
+    )
+    assert "[spoiler=Details]text[/spoiler]" in greatposterwall
+    assert "[url]https://youtu.be/abcdefghijk[/url]" in greatposterwall
+
+
+def test_description_renderers_flatten_tables_and_link_unsupported_video() -> (
+    None
+):
+    source = (
+        "[mediainfo]report[/mediainfo][table][tr][th]A[/th][td]B[/td][/tr][/table]"
+        "[video]https://youtu.be/abcdefghijk[/video]"
+    )
+
+    for tracker in ("HDSPACE", "HDTORRENTS"):
+        formatted = _builder(tracker).tracker_specific_formats(tracker, source)
+        assert "[pre]report[/pre]" in formatted
+        assert "A | B" in formatted
+        assert "[url]https://youtu.be/abcdefghijk[/url]" in formatted
+
+    speedapp = _builder("SPEEDAPP").tracker_specific_formats(
+        "SPEEDAPP",
+        "[table][tr][td]A[/td][td]B[/td][/tr][/table]"
+        "[video]https://youtu.be/abcdefghijk[/video]",
+    )
+    torrentleech = _builder("TORRENTLEECH").tracker_specific_formats(
+        "TORRENTLEECH", "[th]A[/th][video]abcdefghijk[/video]"
+    )
+
+    assert "A | B" in speedapp
+    assert "[youtube]abcdefghijk[/youtube]" in speedapp
+    assert "[td][b]A[/b][/td]" in torrentleech
+    assert "[url]abcdefghijk[/url]" in torrentleech
+
+
+def test_unit3d_comparison_markup_survives_shared_renderer_transforms() -> (
+    None
+):
+    source = (
+        "[comparison=Source, Encode]"
+        "[img]https://image.invalid/source.png[/img]"
+        "[img]https://image.invalid/encode.png[/img]"
+        "[/comparison]"
+    )
+
+    result = _builder("AITHER").tracker_specific_formats("AITHER", source)
+
+    assert result == source
 
 
 def test_tracker_specific_formats_all_trackers_and_image_regexes() -> None:
@@ -1988,7 +2149,28 @@ def test_ua_signature_part_is_empty_when_the_fork_signature_is_off() -> None:
     assert builder._ua_signature_part(meta, True, "") == ""
 
 
-def test_ua_signature_part_keeps_an_explicit_signature_when_configured() -> None:
+def test_general_description_omits_empty_signature_url_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    builder = _builder("FLOOD")
+    _stub_general_sections(builder, monkeypatch)
+    meta = _general_meta(
+        tmp_path, uuid="flood-empty-signature", ua_signature=""
+    )
+    (tmp_path / "tmp" / meta.uuid).mkdir(parents=True, exist_ok=True)
+
+    description = asyncio.run(builder.general_description_generator(meta))
+
+    assert "API Description" in description
+    assert (
+        "[url=https://github.com/wastaken7/Upload-Assistant]"
+        not in description
+    )
+
+
+def test_ua_signature_part_keeps_an_explicit_signature_when_configured() -> (
+    None
+):
     builder = _builder()
     meta = Meta(ua_signature="Shared with Upload-Assistant v3.6 (fork)")
     assert builder._ua_signature_part(meta, True, "custom") == "custom"

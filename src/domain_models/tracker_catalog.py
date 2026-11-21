@@ -105,7 +105,11 @@ _DEFINITIONS = {
         "CINEMATIK", "unit3d_api", ("TV", "MOVIE"), ("cinematik.net",), False
     ),
     "CZTEAM": TrackerDefinition(
-        "CZTEAM", "cookies", ("MOVIE", "TV", "GAME", "MUSIC", "XXX"), ("czteam.me",), False
+        "CZTEAM",
+        "cookies",
+        ("MOVIE", "TV", "GAME", "MUSIC", "XXX"),
+        ("czteam.me",),
+        False,
     ),
     "CINEMAZ": TrackerDefinition(
         "CINEMAZ",
@@ -299,6 +303,9 @@ _DEFINITIONS = {
         ("TV",),
         ("nebulance.io", "tracker.nebulance"),
         False,
+    ),
+    "NIGHTBLOOM": TrackerDefinition(
+        "NIGHTBLOOM", "unit3d_api", ("TV", "MOVIE"), ("nightbloom.cx",), False
     ),
     "NORDICQUALITY": TrackerDefinition(
         "NORDICQUALITY",
@@ -546,6 +553,13 @@ _DEFINITIONS = {
     ),
     "UTOPIA": TrackerDefinition(
         "UTOPIA", "unit3d_api", ("TV", "MOVIE"), ("utp.to",), False
+    ),
+    "VULTU": TrackerDefinition(
+        "VULTU",
+        "other_api",
+        ("MOVIE", "TV", "GAME", "MUSIC"),
+        ("vultu.org",),
+        False,
     ),
     "XINGYUNGEPT": TrackerDefinition(
         "XINGYUNGEPT",

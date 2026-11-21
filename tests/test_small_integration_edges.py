@@ -358,6 +358,16 @@ def test_redaction_handles_nested_json_invalid_blocks_and_export(
     assert "token" in Redaction.redact_value('{"token":"x"}')
     monkeypatch.setattr(Redaction, "redact_private_info", original)
     assert Redaction.redact_value("{not json}") == "{not json}"
+    public_hash = "0123456789abcdef0123456789abcdef"
+    assert (
+        Redaction.redact_value(public_hash, public_ids=(public_hash,))
+        == public_hash
+    )
+    assert Redaction.redact_value(public_hash) == "[REDACTED]"
+    assert Redaction.redact_value(
+        f"https://tracker.invalid/torrents/{public_hash}",
+        public_ids=(public_hash,),
+    ).endswith(public_hash)
 
     meta = Meta(
         base_dir=str(tmp_path),
