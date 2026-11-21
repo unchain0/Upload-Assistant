@@ -12,10 +12,10 @@ import aiofiles
 from bs4 import BeautifulSoup
 from PIL import Image
 
-from src import payload_preview
 from src.app_paths import CODE_DIR
 from src.cogs.redaction import Redaction
 from src.console import logger
+from src.integrations.trackers import payload_preview
 from src.manual_input import Question, ask, choices_from, has_answer
 from src.meta import Meta
 from src.screenshot_manifest import files as manifest_files

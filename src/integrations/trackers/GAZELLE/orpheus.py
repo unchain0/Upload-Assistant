@@ -13,13 +13,26 @@ import bencodepy
 import httpx
 from rich.markup import escape
 
-from src import payload_preview
 from src.console import logger
+from src.integrations.trackers import payload_preview
 from src.meta import Meta
 from src.music.models import MusicRelease
-from src.music.validation import OrpheusEdition, OrpheusMusicValidator, ValidationLevel, lame_preset, resolve_orpheus_edition
+from src.music.validation import (
+    OrpheusEdition,
+    OrpheusMusicValidator,
+    ValidationLevel,
+    lame_preset,
+    resolve_orpheus_edition,
+)
 from src.slot_rules.models import Verdict
-from src.slot_rules.trackers.orpheus import SLOT_DECISION_KEY, MusicEdition, MusicTorrent, OrpheusSlotRules, Outcome, sample_rate_hint
+from src.slot_rules.trackers.orpheus import (
+    SLOT_DECISION_KEY,
+    MusicEdition,
+    MusicTorrent,
+    OrpheusSlotRules,
+    Outcome,
+    sample_rate_hint,
+)
 from src.trackers.common import Common
 from src.trackers.GAZELLE.orpheus_tags import orpheus_tags
 

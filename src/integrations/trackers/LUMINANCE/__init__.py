@@ -21,12 +21,12 @@ from urllib.parse import urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from src import payload_preview
 from src.bbcode import BBCODE
 from src.console import logger
 from src.cookie_auth import CookieAuthUploader, CookieValidator
 from src.description_review import get_base_description
 from src.get_desc import DescriptionBuilder
+from src.integrations.trackers import payload_preview
 from src.media_extensions import VIDEO_EXTENSIONS
 from src.meta import Meta
 from src.rehostimages import ImageHostPolicy, RehostImagesManager

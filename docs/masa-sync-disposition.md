@@ -10,7 +10,7 @@ This sync follows upstream development through 5.1 (`97e9537d`) while keeping th
 | #892 `e3677cf7` — aggregate statistics | `src/stats.py`; browser dashboards and event presentation are discarded. |
 | #939 `16d66fdc` — upload pacing | `src/upload_schedule.py`; waits report through the CLI console. |
 | #897 `8e91a847` — reuse content from another qBittorrent client | `src/integrations/torrent_clients/existing_content.py` and `src/resource_coordinator.py`. |
-| #861 `225a18fa` — typed tracker payload fields and validation | `src/payload_preview.py` and tracker integrations; transport-specific browser rendering is not part of this sync. |
+| #861 `225a18fa` — typed tracker payload fields and validation | `src/integrations/trackers/payload_preview.py` and tracker integrations; transport-specific browser rendering is not part of this sync. |
 | #55 `5c5efb16` — omit the fork signature when disabled | `DescriptionBuilder._ua_signature_part`; `tests/test_description_builder_edges.py` covers empty and explicit signatures. |
 
 Reusable text redaction formerly called through `src/webui_events.py` now belongs to `src/integrations/security/redaction.py`. Tracker-status classification belongs to `src/upload_history.py`. Manual and trump prompts keep their CLI interactions and no longer emit browser events.

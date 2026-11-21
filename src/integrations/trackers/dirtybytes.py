@@ -8,11 +8,11 @@ from typing import Any, ClassVar, cast
 import aiofiles
 import httpx
 
-from src import payload_preview
 from src.artwork import is_valid_image_bytes
 from src.cogs.redaction import Redaction
 from src.console import logger
 from src.get_desc import DescriptionBuilder
+from src.integrations.trackers import payload_preview
 from src.meta import Meta
 from src.screenshot_manifest import files as manifest_files
 from src.trackers.common import Common

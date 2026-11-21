@@ -25,9 +25,9 @@ import bencodepy
 import httpx
 from rich.markup import escape
 
-from src import payload_preview
 from src.console import logger
 from src.get_desc import book_overview_to_bbcode
+from src.integrations.trackers import payload_preview
 from src.manual_input import Question, ask, choices_from
 from src.meta import Meta
 from src.trackers.common import Common

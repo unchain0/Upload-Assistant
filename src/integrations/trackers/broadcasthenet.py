@@ -20,9 +20,9 @@ import bencodepy
 import httpx
 from torf import TorfError, Torrent
 
-from src import payload_preview
 from src.console import logger
 from src.exceptions import UploadError
+from src.integrations.trackers import payload_preview
 from src.mediainfo import strip_report_by_line
 from src.meta import Meta
 from src.trackers.common import Common
