@@ -15,6 +15,8 @@ This sync follows upstream development through 5.1 (`97e9537d`) while keeping th
 
 Reusable text redaction formerly called through `src/webui_events.py` now belongs to `src/integrations/security/redaction.py`. Tracker-status classification belongs to `src/upload_history.py`. Manual and trump prompts keep their CLI interactions and no longer emit browser events.
 
+The history and statistics modules are retained in their application-owned MASA modules, but this sync does not add lifecycle wiring to `upload.py`; their UI-only presentation is discarded. Do not describe those views as available in the CLI.
+
 ## Discarded UI-only changes
 
 | Upstream source | Disposition |
