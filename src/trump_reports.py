@@ -23,7 +23,6 @@ import cli_ui
 import httpx
 from rich.markup import escape
 
-from src import webui_events
 from src.console import logger, prompt_in_thread
 from src.manual_input import prompt_session
 from src.meta import Meta
@@ -242,8 +241,9 @@ async def _choose(candidates: list[TrumpCandidate], tracker: str, describe: Call
     labels = [f"{candidate.name} ({REASON_LABELS[candidate.reason]})" for candidate in candidates]
     for number, label in enumerate(labels, start=1):
         logger.info(f"  {number}. {escape(label)}", extra={"highlighter": None})
-    with webui_events.numbered_options(labels, actions=[("", "Not trumping")], hint=f"Pick the torrent your upload replaces on {tracker}."):
-        answer = await _ask_string("Enter the number of the release you are trumping, or press Enter if you are not trumping:")
+    answer = await _ask_string(
+        "Enter the number of the release you are trumping, or press Enter if you are not trumping:"
+    )
     # isdecimal, not isdigit: int() rejects digits such as "²".
     if answer.isdecimal() and 1 <= int(answer) <= len(candidates):
         return candidates[int(answer) - 1]
@@ -254,17 +254,14 @@ async def _proceed_despite_reports(tracker_instance: Any, tracker: str, candidat
     """Check the site for reports on the torrent; False means the user does not want to upload."""
     reports = await tracker_instance.find_trump_reports(meta, candidate.torrent_id)
     if reports is None:
-        with webui_events.field_prompt(
-            "Trump report",
-            {"Tracker": tracker, "Trumped torrent": candidate.name},
-            hint=f"{tracker} did not answer the search for existing trump reports, so another upload may already be replacing this torrent.",
-        ):
-            return await _ask_yes_no(f"Could not check existing trump reports on {tracker}. Upload and report the trump anyway?", default=False)
+        return await _ask_yes_no(
+            f"Could not check existing trump reports on {tracker}. Upload and report the trump anyway?",
+            default=False,
+        )
     if not reports:
         return True
 
     logger.info(f"[bold yellow]Found {len(reports)} existing trump report(s) on {tracker} for this release[/bold yellow]")
-    summary: dict[str, Any] = {"Tracker": tracker}
     for report in reports:
         trumping: list[dict[str, Any]] = [cast(dict[str, Any], torrent) for torrent in cast(list[Any], report.get("trumping_torrent") or []) if isinstance(torrent, dict)]
         names = ", ".join(str(torrent.get("name", "Unknown")) for torrent in trumping)
@@ -278,43 +275,33 @@ async def _proceed_despite_reports(tracker_instance: Any, tracker: str, candidat
             logger.info("  [yellow]This report is already solved.[/yellow]")
         else:
             logger.info("  [yellow]The trumping torrent for this report seems to be in the moderation queue.[/yellow]")
-        status = "Solved" if solved else "In moderation queue"
-        summary[f"Report {report.get('id')}"] = f"{title} (trumped by: {names})" if names else (f"{title} ({status.lower()})" if title else status)
-    with webui_events.field_prompt("Existing trump reports", summary, hint=f"Found {len(reports)} existing trump report(s) on {tracker} for this release."):
-        return await _ask_yes_no("Do you want to proceed with the upload anyway?", default=False)
+    return await _ask_yes_no(
+        "Do you want to proceed with the upload anyway?", default=False
+    )
 
 
 async def _ask_comparison(plan: TrumpPlan, tracker: str, release: str) -> None:
     """Fill the comparison a report needs; raises ``_DeclinedError`` when none is given."""
-    question, buttons = (
-        "Enter 'd' if the comparison is in the description, 'L' to paste links, or press Enter if you are not trumping:",
-        [
-            ("d", "In the description"),
-            ("L", "Paste links"),
-            ("", "Not trumping"),
-        ],
+    question = (
+        f"Trump report comparison for {release} on {tracker}: enter 'd' if it is in "
+        "the description, 'L' to paste links, or press Enter if you are not trumping:"
     )
-    with webui_events.field_prompt(
-        "Trump report comparison",
-        {"Tracker": tracker, "Release": release, "Trumped torrent": plan.reported_name},
-        hint=f"{tracker} needs comparison screenshots for trump reports.",
-        actions=buttons,
-    ):
-        where = await _ask_string(question)
+    where = await _ask_string(question)
     if where.lower() == "d":
         plan.comparison = "description"
         return
     if where.lower() != "l":
         raise _DeclinedError
-    summary = {"Tracker": tracker, "Trumped torrent": plan.reported_name, "Trumped torrent screenshots": ""}
-    hint = "Comma-separated screenshot links. Leaving it blank means you are not trumping."
-    with webui_events.field_prompt("Trump report comparison", summary, focus="Trumped torrent screenshots", hint=hint, actions=[("", "Not trumping")]):
-        plan.reported_screenshots = _links(await _ask_string("Paste screenshot links for the torrent you are trumping (comma-separated):"))
+    plan.reported_screenshots = _links(
+        await _ask_string(
+            "Paste screenshot links for the torrent you are trumping (comma-separated):"
+        )
+    )
     if not plan.reported_screenshots:
         raise _DeclinedError
-    summary = {**summary, "Trumped torrent screenshots": ", ".join(plan.reported_screenshots), "Your upload screenshots": ""}
-    with webui_events.field_prompt("Trump report comparison", summary, focus="Your upload screenshots", hint=hint, actions=[("", "Not trumping")]):
-        plan.trumping_screenshots = _links(await _ask_string("Paste screenshot links for your upload (comma-separated):"))
+    plan.trumping_screenshots = _links(
+        await _ask_string("Paste screenshot links for your upload (comma-separated):")
+    )
     if not plan.trumping_screenshots:
         raise _DeclinedError
 
@@ -336,13 +323,6 @@ async def review(
     if tracker_support is None or not candidates:
         return ReviewOutcome.DECLINED
 
-    webui_events.dupes(
-        tracker,
-        [candidate.entry for candidate in candidates],
-        source_size=meta.source_size,
-        trumpable=True,
-        note=f"Your upload may replace {'this release' if len(candidates) == 1 else 'one of these releases'}. {tracker} accepts a trump report for it after uploading.",
-    )
     logger.info("[bold red]Trumpable found![/bold red]", extra={"ua_gui": False})
     candidate = await _choose(candidates, tracker, describe)
     if candidate is None:
@@ -365,11 +345,9 @@ async def review(
         if tracker_support.comparison and not meta.tv_pack:
             await _ask_comparison(plan, tracker, meta.name or meta.title or "")
         if tracker_support.note and not meta.tv_pack:
-            summary = {"Tracker": tracker, "Trumped torrent": plan.reported_name, "Report message": report_message(meta, plan)}
-            with webui_events.field_prompt(
-                "Trump report", summary, hint="Added to the report message. Leave it blank to send the report without it.", actions=[("", "No reason")]
-            ):
-                plan.note = await _ask_string(f"Enter a reason for the trump report on {tracker} (optional):")
+            plan.note = await _ask_string(
+                f"Enter a reason for the trump report on {tracker} (optional):"
+            )
     except _DeclinedError:
         logger.info(f"[yellow]{tracker}: no comparison given, so no trump report will be sent.[/yellow]")
         return ReviewOutcome.DECLINED

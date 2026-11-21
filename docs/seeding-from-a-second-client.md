@@ -47,8 +47,6 @@ Edit the `config.py` that UA reads, not the bundled `data/example_config.py`:
 - Linux/macOS: `~/.local/share/Upload-Assistant/data/config.py`
 - Custom state directory: `<UA_DATA_DIR>/data/config.py`
 
-Or use the WebUI config page (see [Using the WebUI](#using-the-webui)).
-
 ### 2. Add both clients
 
 Both must be qBittorrent (`"torrent_client": "qbit"`). The names (`local_qbit`, `seedbox_qbit`) are up to you.
@@ -107,13 +105,6 @@ Use `"prefer"` only when B can see the same files through a path mapping and you
 
 - With `linking` set to `hardlink` or `symlink`, UA creates the links and adds the torrent from the linked folder. If linking fails and `allow_fallback` is `False`, nothing is added to B.
 - Without linking, UA uses `local_path`/`remote_path` to translate the path.
-
-### Using the WebUI
-
-1. Open the config page and go to **Torrent Clients**.
-2. Open client B. In the **Existing Content** group, set **Match Existing Content** to **Require Existing Copy** (or **Prefer Existing Copy**).
-3. In the `DEFAULT` settings, put both clients in the injecting client list.
-4. Save.
 
 ## What counts as "the same files"
 

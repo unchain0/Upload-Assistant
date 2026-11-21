@@ -88,7 +88,7 @@ When only Usenet is selected, `"usenet"` checks bandwidth before posting only wh
 
 ### Multiple concurrent uploads
 
-When several uploads run at once (WebUI tabs or separate CLI runs), bandwidth-controlled uploads take turns, one item at a time. Only one of them waits on qBittorrent and uploads. It keeps its turn until every upload for its current item is done, then the next one starts. When several are waiting, the upload that started first goes first. For a queue, other uploads can take a turn between its items.
+When several CLI processes run at once, bandwidth-controlled uploads take turns, one item at a time. Only one of them waits on qBittorrent and uploads. It keeps its turn until every upload for its current item is done, then the next one starts. When several are waiting, the upload that started first goes first. For a queue, other uploads can take a turn between its items.
 
 Only uploads with bandwidth control enabled take part. With `qbit_bandwidth_control` enabled in the configuration, that is every upload. With it disabled, only runs started with `-qbcon` wait their turn; uploads without it continue with no qBittorrent restriction.
 

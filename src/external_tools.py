@@ -1,8 +1,7 @@
 """Read-only availability checks for optional external tools.
 
-The WebUI uses this module to report the same configured, PATH, and managed
-binary locations that Upload Assistant uses at runtime. Checks never download
-or modify a tool installation.
+Use the same configured, PATH, and managed binary locations that Upload
+Assistant uses at runtime. Checks never download or modify a tool installation.
 """
 
 from __future__ import annotations

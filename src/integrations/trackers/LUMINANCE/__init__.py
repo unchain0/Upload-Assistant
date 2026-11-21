@@ -394,7 +394,7 @@ class Luminance:
 
         Only text the upload renders counts: the synopsis (``meta.overview``, which
         the provider's description fills) and the user's description, including one
-        saved in the WebUI editor, which ``get_base_description`` copies into ``meta``.
+        provided by the active release metadata, which ``get_base_description`` copies into ``meta``.
         """
         parts = [str(meta.overview or ""), get_base_description(meta)]
         return " ".join(re.sub(r"\[[^\]]*\]|<[^>]+>|https?://\S+", " ", part) for part in parts).strip()

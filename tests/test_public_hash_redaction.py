@@ -1,4 +1,4 @@
-from src.webui_events import plain_text
+from src.integrations.security.redaction import plain_text
 
 
 def test_public_release_hash_survives_redaction_only_when_explicit() -> None:

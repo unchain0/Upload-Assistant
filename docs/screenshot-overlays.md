@@ -1,6 +1,6 @@
 # Screenshot overlays
 
-Screenshot overlays add frame information to captured images. You can configure them directly in your user `config.py`; the WebUI is optional. See the [configuration reference](example-config.md) if you need to locate your config file.
+Screenshot overlays add frame information to captured images. Configure them directly in your user `config.py`. See the [configuration reference](example-config.md) if you need to locate your config file.
 
 ## Choose a layout
 
@@ -69,7 +69,7 @@ The master switch and at least one applicable label must be enabled for text to 
 
 An older config with `"frame_overlay": True` and none of the individual label settings keeps frame number, frame type and the conditional Tonemapped label enabled. Timestamp stays off. Explicit individual label settings take precedence over these legacy defaults; for example, `"overlay_frame_type": False` hides the frame type even when the master is enabled.
 
-When editing manually, add the four individual label settings explicitly, as in the example above, to keep their selections independent of the master switch. In the WebUI, changing the master and clicking **Save Config** also stores any missing individual label settings using their previous selections. Changing a toggle alone does not save the config.
+When editing manually, add the four individual label settings explicitly, as in the example above, to keep their selections independent of the master switch.
 
 ## Capture behavior
 
@@ -77,5 +77,3 @@ When editing manually, add the four individual label settings explicitly, as in 
 - With FFmpeg capture, active overlays use its existing tone-mapping path instead of libplacebo. Choosing the Tonemapped label does not change the `tone_map` setting.
 - Existing upload restrictions still apply: overlays are suppressed for uploads to AvistaZ, CinemaZ and PrivateHD.
 - Changes affect newly captured screenshots. Reused images keep any text already present in them. Restart a running CLI process after editing the config, then capture new screenshots to see the result.
-
-In the WebUI, the same settings are under **Screenshot Handling → Screenshot Overlays**. Click **Preview** for an illustrative preview without starting a capture.

@@ -12,7 +12,7 @@ Use an explicit category when the release name is not recognized:
 python upload.py "/path/to/release" --category xxx
 ```
 
-The CLI value is lowercase `xxx`; it is normalized internally to `XXX`. In the WebUI, add `--category xxx` through the argument sidebar or custom arguments field.
+The CLI value is lowercase `xxx`; it is normalized internally to `XXX`.
 
 ## Naming and metadata
 
@@ -64,8 +64,6 @@ python upload.py "/path/to/release" --category xxx \
   --poster "/path/to/cover.jpg" --banner "https://images.example/banner.jpg"
 ```
 
-During a WebUI run, **Now Processing** shows the current XXX details and cover. Generated screenshots can be inspected through the standard screenshot review workflow. When the displayed cover was generated locally, the WebUI also allows generating another frame-based cover.
-
 ## Supported destinations
 
 The current XXX upload destinations are:
@@ -98,5 +96,3 @@ Upload only to a supported destination:
 ```bash
 python upload.py "/media/custom-release" --category xxx --site-upload BITPORN
 ```
-
-The same arguments are available in the WebUI sidebar and are appended to the custom argument string before execution.

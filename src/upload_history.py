@@ -24,12 +24,46 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, TypeIs, cast
+from typing import Any, Literal, TypeIs, cast
 
-from src import webui_events
 from src.app_db import connect as connect_app_db
 from src.app_db import database_available, database_path
 from src.console import logger
+from src.integrations.security.redaction import plain_text
+
+MAX_TEXT_LENGTH = 1000
+TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500"
+TrackerStatus = Literal["pending", "success", "failed", "skipped", "dupe", "banned"]
+DEFAULT_STATUS_MESSAGES: dict[str, str] = {
+    "banned": "Release group is banned on this tracker",
+    "dupe": "Possible dupe on this tracker",
+    "skipped": "Not uploaded",
+    "failed": "Upload did not complete",
+}
+
+
+def tracker_status_from_meta(
+    status: Mapping[str, Any], *, final: bool, upload_started: bool = True
+) -> TrackerStatus:
+    """Classify a tracker status for the local upload history."""
+    message = str(status.get("status_message") or "").lower()
+    if status.get("banned"):
+        return "banned"
+    if status.get("upload_success") is True:
+        return "success"
+    if status.get("upload_success") is False:
+        return "failed"
+    if status.get("dupe"):
+        return "dupe"
+    if status.get("skipped"):
+        return "skipped"
+    if "dupe" in message or "duplicate" in message:
+        return "dupe"
+    if status.get("upload") is True:
+        if not final:
+            return "pending"
+        return "failed" if upload_started else "skipped"
+    return "skipped"
 
 
 def _is_str_dict(val: object) -> TypeIs[dict[str, Any]]:
@@ -166,7 +200,7 @@ def content_fingerprint(path: str | Path) -> str:
     return sha256("\n".join(f"{name}\t{size}" for name, size in chosen).encode("utf-8")).hexdigest()
 
 
-def _text(value: object, limit: int = webui_events.MAX_TEXT_LENGTH, *, markup: bool = True) -> str:
+def _text(value: object, limit: int = MAX_TEXT_LENGTH, *, markup: bool = True) -> str:
     """Return redacted plain text; ``markup=False`` keeps literal brackets, as in release names."""
     if value in (None, ""):
         return ""
@@ -175,7 +209,7 @@ def _text(value: object, limit: int = webui_events.MAX_TEXT_LENGTH, *, markup: b
             value = json.dumps(value, default=str)
         except TypeError, ValueError:
             value = str(value)
-    return webui_events.plain_text(value, limit, markup=markup)
+    return plain_text(value, limit, markup=markup)
 
 
 def _http_link(value: object) -> str:
@@ -298,13 +332,13 @@ def _tracker_rows(meta: Any, tracker_class_map: Mapping[str, Any], state: _ItemS
         if not tracker or tracker in {"MANUAL", "USENET"} or not isinstance(raw_status, Mapping):
             continue
         status = cast(Mapping[str, Any], raw_status)
-        resolved = webui_events.tracker_status_from_meta(status, final=True, upload_started=upload_started)
+        resolved = tracker_status_from_meta(status, final=True, upload_started=upload_started)
         message = status.get("status_message")
         if resolved == "success":
             text = _text(message)
             message_text = "" if "data error" in text.lower() else text
         else:
-            message_text = _text(message) or webui_events.DEFAULT_STATUS_MESSAGES.get(resolved, "")
+            message_text = _text(message) or DEFAULT_STATUS_MESSAGES.get(resolved, "")
         duration = getattr(meta, "get", lambda *_args: None)(f"{tracker}_upload_duration")
         published = state.links.get(tracker, {}) if state else {}
         link = (published.get("link") or _tracker_link(status, tracker_class_map.get(tracker))) if resolved == "success" else ""
@@ -328,7 +362,7 @@ def _tracker_rows(meta: Any, tracker_class_map: Mapping[str, Any], state: _ItemS
             {
                 "tracker": tracker,
                 "status": "skipped",
-                "message": webui_events.DEFAULT_STATUS_MESSAGES["skipped"],
+                "message": DEFAULT_STATUS_MESSAGES["skipped"],
                 "link": "",
                 "torrent_id": "",
                 "duration": None,
@@ -349,7 +383,7 @@ def _artwork_url(meta: Any) -> str:
     if url:
         return url
     poster = str(getattr(meta, "tmdb_poster_path", "") or "")
-    return _http_link(f"{webui_events.TMDB_POSTER_BASE}{poster}") if poster.startswith("/") else ""
+    return _http_link(f"{TMDB_POSTER_BASE}{poster}") if poster.startswith("/") else ""
 
 
 def _year(meta: Any) -> int | None:

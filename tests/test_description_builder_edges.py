@@ -2149,6 +2149,25 @@ def test_ua_signature_part_is_empty_when_the_fork_signature_is_off() -> None:
     assert builder._ua_signature_part(meta, True, "") == ""
 
 
+def test_general_description_omits_empty_signature_url_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    builder = _builder("FLOOD")
+    _stub_general_sections(builder, monkeypatch)
+    meta = _general_meta(
+        tmp_path, uuid="flood-empty-signature", ua_signature=""
+    )
+    (tmp_path / "tmp" / meta.uuid).mkdir(parents=True, exist_ok=True)
+
+    description = asyncio.run(builder.general_description_generator(meta))
+
+    assert "API Description" in description
+    assert (
+        "[url=https://github.com/wastaken7/Upload-Assistant]"
+        not in description
+    )
+
+
 def test_ua_signature_part_keeps_an_explicit_signature_when_configured() -> (
     None
 ):

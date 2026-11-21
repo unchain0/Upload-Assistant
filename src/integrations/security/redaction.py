@@ -13,6 +13,9 @@ import aiofiles
 
 from src.domain_models.release import Meta
 
+_ANSI_ESCAPE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_MARKUP_TAG = re.compile(r"\[/?[a-zA-Z#][^\[\]]*\]|\[/\]")
+
 SENSITIVE_KEYS: set[str] = {
     "token",
     "passkey",
@@ -104,6 +107,30 @@ class PathAwareEncoder(json.JSONEncoder):
         if isinstance(o, Path):
             return str(o)
         return super().default(o)
+
+
+def plain_text(
+    value: Any,
+    limit: int = 1000,
+    *,
+    markup: bool = True,
+    public_ids: Iterable[object] = (),
+) -> str:
+    """Return bounded plain text with private values redacted for display."""
+    text = _ANSI_ESCAPE.sub("", str(value if value is not None else ""))
+    if markup:
+        try:
+            from rich.text import Text
+
+            text = Text.from_markup(text).plain
+        except Exception:
+            text = _MARKUP_TAG.sub("", text)
+    try:
+        text = str(Redaction.redact_value(text, public_ids=public_ids))
+    except Exception:
+        return ""
+    text = text.strip()
+    return text if len(text) <= limit else f"{text[: limit - 1]}…"
 
 
 class Redaction:

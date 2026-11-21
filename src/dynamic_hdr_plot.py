@@ -20,7 +20,6 @@ from src.console import logger
 from src.meta import Meta
 from src.stats import record_event_async
 from src.temp_paths import dynamic_hdr_plots_dir, release_temp_dir
-from src.webui_progress import complete_progress, publish_progress
 
 CACHE_VERSION = 1
 VIDEO_EXTENSIONS = {".m2ts", ".mkv", ".mp4", ".ts", ".hevc", ".h265"}
@@ -142,8 +141,6 @@ async def process_dynamic_hdr_plots(meta: Meta, config: dict[str, Any], uploadsc
 
     jobs = [(kind, source) for source in sources for kind in formats]
     logger.info("[yellow]Generating dynamic HDR plots reads each selected video file in full; this may take a while for large releases.[/yellow]")
-    progress_id = f"dynamic-hdr-plot-{meta.uuid}"
-    publish_progress(progress_id, "Generating dynamic HDR plots", current=0, total=len(jobs), detail="Preparing metadata tools", group="dynamic_hdr", unit="plots")
     tools: dict[str, str] = {}
     ffmpeg_binary = configured_binary("ffmpeg_path", config) or "ffmpeg"
     generated: list[str] = []
@@ -160,7 +157,7 @@ async def process_dynamic_hdr_plots(meta: Meta, config: dict[str, Any], uploadsc
         except Exception as error:
             detail = f"{kind} plot failed for {source.name}: {error!s}"
             logger.warning(f"[yellow]{detail}[/yellow]")
-        publish_progress(progress_id, "Generating dynamic HDR plots", current=position, total=len(jobs), detail=detail, group="dynamic_hdr", unit="plots")
+        logger.info(f"[cyan]Dynamic HDR plot {position}/{len(jobs)}: {detail}[/cyan]")
 
     for kind, count in generated_by_kind.items():
         await record_event_async("artifact", service="screenshot", operation="created", category=f"{kind}_plot", count=count)
@@ -173,13 +170,4 @@ async def process_dynamic_hdr_plots(meta: Meta, config: dict[str, Any], uploadsc
                 cache_path.write_text(json.dumps({"cache_version": CACHE_VERSION, "fingerprint": fingerprint, "dynamic_hdr_plot_images": images}, indent=4), encoding="utf-8")
         except Exception as error:
             logger.error(f"[red]Error uploading dynamic HDR plots: {error!s}[/red]")
-    complete_progress(
-        progress_id,
-        "Dynamic HDR plots generated",
-        current=len(generated),
-        total=len(jobs),
-        detail=f"Generated {len(generated)} of {len(jobs)} plot(s)",
-        group="dynamic_hdr",
-        unit="plots",
-    )
     return generated

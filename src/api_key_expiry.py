@@ -1,4 +1,4 @@
-"""Shared, advisory tracker API-key expiry status for the CLI and WebUI."""
+"""Shared, advisory tracker API-key expiry status for upload runs."""
 
 from __future__ import annotations
 
@@ -150,7 +150,7 @@ def observe_tracker_response(config: dict[str, Any], meta: Any, tracker: str, re
 
 
 def reset_api_key_expiry_warnings() -> None:
-    """Start a new upload run, including when the process is reused by WebUI."""
+    """Start a new upload run and reset per-run warning state."""
     with _warning_lock:
         _warned.clear()
 

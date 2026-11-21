@@ -15,7 +15,7 @@ Upload Assistant uses an FFmpeg already on your PATH or downloads its verified F
 
 ## Create the configuration
 
-Start the Web UI with `ua --webui`. It creates the configuration on first launch; use the configuration page to add your API keys and tracker credentials before the first upload. Alternatively, the first CLI upload command creates the same file and stops so you can edit it before retrying.
+On the first CLI upload command, Upload Assistant creates the configuration file and stops so you can add API keys and tracker credentials before retrying.
 
 ## Basic commands
 

@@ -61,6 +61,13 @@ DEFAULT_KEY_TYPES: dict[str, tuple[type, ...]] = {
     "max_menu_screens": (str, int),
     "thumbnail_size": (str, int),
     "frame_overlay": (bool,),
+    "overlay_frame_number": (bool,),
+    "overlay_frame_type": (bool,),
+    "overlay_timestamp": (bool,),
+    "overlay_tonemapped": (bool,),
+    "overlay_text_size": (str, int),
+    "overlay_position": (str,),
+    "overlay_layout": (str,),
     "tone_map": (bool,),
     "auto_dvd_menus": (bool,),
     "scale_screenshots_for_par": (bool,),
@@ -811,6 +818,83 @@ def _numeric_default_warning(
     return None
 
 
+_OVERLAY_BOOLEAN_KEYS = (
+    "overlay_frame_number",
+    "overlay_frame_type",
+    "overlay_timestamp",
+    "overlay_tonemapped",
+)
+_OVERLAY_CHOICES = {
+    "overlay_position": {"left", "right"},
+    "overlay_layout": {"stacked", "single_line"},
+}
+
+
+def _overlay_boolean_warnings(
+    default: dict[str, Any],
+) -> list[ConfigValidationWarning]:
+    return [
+        ConfigValidationWarning(
+            "Value must be a boolean", key=key, section="DEFAULT"
+        )
+        for key in _OVERLAY_BOOLEAN_KEYS
+        if key in default and not isinstance(default[key], bool)
+    ]
+
+
+def _overlay_text_size_warning(
+    default: dict[str, Any],
+) -> ConfigValidationWarning | None:
+    if "overlay_text_size" not in default:
+        return None
+    value = default["overlay_text_size"]
+    try:
+        valid = not isinstance(value, bool) and 1 <= int(value) <= 100
+    except TypeError, ValueError, OverflowError:
+        valid = False
+    if valid:
+        return None
+    return ConfigValidationWarning(
+        "Value must be an integer from 1 to 100",
+        key="overlay_text_size",
+        section="DEFAULT",
+    )
+
+
+def _overlay_choice_warning(
+    key: str, value: Any, allowed: set[str]
+) -> ConfigValidationWarning | None:
+    if isinstance(value, str) and value in allowed:
+        return None
+    return ConfigValidationWarning(
+        f"Value must be one of: {', '.join(sorted(allowed))}",
+        key=key,
+        section="DEFAULT",
+    )
+
+
+def _overlay_choice_warnings(
+    default: dict[str, Any],
+) -> list[ConfigValidationWarning]:
+    warnings: list[ConfigValidationWarning] = []
+    for key, allowed in _OVERLAY_CHOICES.items():
+        if key in default and (
+            warning := _overlay_choice_warning(key, default[key], allowed)
+        ):
+            warnings.append(warning)
+    return warnings
+
+
+def _overlay_warnings(
+    default: dict[str, Any],
+) -> list[ConfigValidationWarning]:
+    warnings = _overlay_boolean_warnings(default)
+    if warning := _overlay_text_size_warning(default):
+        warnings.append(warning)
+    warnings.extend(_overlay_choice_warnings(default))
+    return warnings
+
+
 def _default_numeric_warnings(
     default: dict[str, Any],
 ) -> list[ConfigValidationWarning]:
@@ -891,6 +975,7 @@ def _validate_default_section(
     warnings.extend(_default_numeric_warnings(default))
     warnings.extend(_image_upload_concurrency_warnings(default))
     warnings.extend(_image_upload_delay_warnings(default))
+    warnings.extend(_overlay_warnings(default))
     return errors, warnings
 
 

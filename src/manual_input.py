@@ -10,10 +10,7 @@ which resolves it in this order:
 2. an answer given earlier for the same release (``meta.manual_answers``,
    remembered per release by :mod:`src.upload_history` and reloaded on the next run);
 3. the unattended policy, when nobody is there to answer;
-4. an interactive prompt, which the Web UI's GUI mode shows as a form.
-
-The CLI prompt is a plain ``cli_ui`` call, so the GUI receives it through the
-existing prompt events in :mod:`src.console` and :mod:`src.webui_events`.
+4. an interactive CLI prompt, when a person is available to answer.
 """
 
 from __future__ import annotations
@@ -24,13 +21,19 @@ import contextvars
 import inspect
 import re
 import weakref
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeIs, cast
 
 import cli_ui
 
-from src import webui_events
 from src.console import logger, prompt_in_thread
 from src.meta import Meta
 
@@ -270,11 +273,10 @@ async def ask(meta: Meta, question: Question) -> Any:
 
     async with prompt_session():
         while True:
-            with webui_events.field_prompt(name, question.summary, focus=question.focus, hint=question.hint, placeholder=question.placeholder):
-                try:
-                    answer = await prompt_in_thread(_ask_cli, question)
-                except EOFError:
-                    return None
+            try:
+                answer = await prompt_in_thread(_ask_cli, question)
+            except EOFError:
+                return None
             value = _normalize(question, answer)
             if value is None:
                 return None

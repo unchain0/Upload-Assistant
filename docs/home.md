@@ -5,10 +5,6 @@
 [Upload Order and qBittorrent Bandwidth Control](upload-order-and-bandwidth-control.md)
 [XXX Category Upload Guide](xxx-upload.md)
 
-[WebUI](web-ui.md)
-[WebUI Quick Start](web-ui-basic.md)
-[WebUI API Reference](web-ui-api.md)
-
 [Image hosts / API contracts](image-hosts.md)
 
 [Docker](docker.md)

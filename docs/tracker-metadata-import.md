@@ -122,7 +122,7 @@ Notes:
 ## What happens to the imported description
 
 1. **Cleaning**: the description is cleaned with rules specific to each source tracker, for example removing HDBits-hosted images and links, which would not work on other sites.
-2. **Review**: in an interactive run, Upload Assistant shows the cleaned text and asks you to keep it (Enter), edit it (`e`, opens your editor) or discard it (`d`). When using the WebUI, the imported text is offered in the description review step. Unattended runs keep it without asking.
+2. **Review**: in an interactive run, Upload Assistant shows the cleaned text and asks you to keep it (Enter), edit it (`e`, opens your editor) or discard it (`d`). Unattended runs keep it without asking.
 3. **Placement**: the description is added to the description that Upload Assistant builds for each target tracker, in the "API Overview / Synopsis" block (see [Description Builder](description-builder.md)), followed by your own description file or link if you supplied one.
 
 ## Troubleshooting

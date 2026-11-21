@@ -15,13 +15,11 @@ from typing import Any, cast
 
 from src.console import console, logger
 from src.meta import Meta
-from src.webui_progress import complete_progress, has_progress_callback, publish_progress
 
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 _DURATION_RE = re.compile(r"(?:\d+[smhd])+")
 _DURATION_PART_RE = re.compile(r"(\d+)([smhd])")
 _TIME_ONLY_RE = re.compile(r"(\d{1,2}):(\d{2})(?::(\d{2}))?")
-_PROGRESS_ID = "upload-schedule"
 
 
 def parse_duration(value: object) -> int:
@@ -142,23 +140,14 @@ async def wait_until(
     remaining = target - clock()
     if remaining <= 0:
         return False
-    total = remaining
     target_text = datetime.fromtimestamp(target).astimezone().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"[yellow]{label}: waiting until {target_text} ({format_duration(remaining)}).[/yellow]")
-    web_progress = has_progress_callback()
     while remaining > 0:
         detail = f"Upload at {target_text} ({format_duration(remaining)} left)"
-        if web_progress:
-            percent = max(0.0, min(100.0, (total - remaining) / total * 100))
-            publish_progress(_PROGRESS_ID, label, current=percent, total=100, detail=detail, group="schedule")
-        else:
-            console.print(f"[yellow]{label}: {detail}[/yellow]     ", end="\r")
+        console.print(f"[yellow]{label}: {detail}[/yellow]     ", end="\r")
         await sleep(min(chunk, remaining))
         remaining = target - clock()
-    if web_progress:
-        complete_progress(_PROGRESS_ID, label, detail=f"Started at {datetime.now().astimezone().strftime('%H:%M:%S')}", group="schedule")
-    else:
-        console.print()
+    console.print()
     logger.info(f"[green]{label}: wait finished.[/green]")
     return True
 

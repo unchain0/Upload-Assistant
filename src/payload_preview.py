@@ -23,10 +23,10 @@ from typing import Any, Literal, cast
 
 from rich.markup import escape
 
-from src import webui_events
 from src.domain_models.errors import OperationAbortedError
 from src.domain_models.release import Meta
 from src.integrations.observability.runtime_support import logger
+from src.integrations.security.redaction import plain_text
 
 
 class PromptBlockedError(OperationAbortedError):
@@ -37,7 +37,7 @@ Kind = Literal["text", "choice", "flag", "readonly", "deferred"]
 # Form fields that carry credentials are never shown or changed.
 SECRET_FIELDS = frozenset({"auth", "user", "username", "uid", "userid", "user_id", "email", "pass", "cookie"})
 SECRET_PARTS = ("passkey", "password", "token", "csrf", "apikey", "api_key", "authkey", "secret", "announce", "torrent_pass", "session")
-# Bytes the previews may take in the prompt event (webui_events drops events over 256 KB).
+# Bound the description preview so tracker payload inspection stays compact.
 GUI_BUDGET = 160_000
 TEXT_LIMIT = 255
 SHOWN_TEXT = 300
@@ -293,24 +293,24 @@ class PayloadField:
         return True, value
 
     def to_gui(self, choice_refs: dict[str, str]) -> dict[str, Any]:
-        item: dict[str, Any] = {"key": self.key, "label": webui_events.plain_text(self.label, 100, markup=False), "kind": self.kind}
+        item: dict[str, Any] = {"key": self.key, "label": plain_text(self.label, 100, markup=False), "kind": self.kind}
         if self.kind == "flag":
             item["value"] = self.value == self.on
         elif self.kind == "choice":
             item["value"] = str(self.value)
-            item["display"] = webui_events.plain_text(self.display(self.value), SHOWN_TEXT, markup=False)
-            options = [[str(option), webui_events.plain_text(name, 200, markup=False)] for option, name in self.choices]
+            item["display"] = plain_text(self.display(self.value), SHOWN_TEXT, markup=False)
+            options = [[str(option), plain_text(name, 200, markup=False)] for option, name in self.choices]
             ref_key = json.dumps(options, separators=(",", ":"))
             item["choices"] = choice_refs.setdefault(ref_key, f"c{len(choice_refs)}")
         elif self.kind == "text":
-            item["value"] = webui_events.plain_text(self.value, self.max_length, markup=False)
+            item["value"] = plain_text(self.value, self.max_length, markup=False)
             item["max"] = self.max_length
             if self.numeric:
                 item["numeric"] = True
         elif self.kind == "readonly":
             item["value"] = _readonly_text(self.value)
         if self.note:
-            item["note"] = webui_events.plain_text(self.note, SHOWN_TEXT, markup=False)
+            item["note"] = plain_text(self.note, SHOWN_TEXT, markup=False)
         if self.role and self.editable:
             item["role"] = self.role
         return item
@@ -334,13 +334,13 @@ def _readonly_text(value: Any) -> str:
     if isinstance(value, (list, tuple)):
         parts = [str(item) for item in cast(Iterable[Any], value)]
         joined = ", ".join(parts)
-        return webui_events.plain_text(joined, SHOWN_TEXT, markup=False) if len(joined) <= SHOWN_TEXT else f"{len(parts)} items"
+        return plain_text(joined, SHOWN_TEXT, markup=False) if len(joined) <= SHOWN_TEXT else f"{len(parts)} items"
     if isinstance(value, dict):
         return f"{len(cast(dict[Any, Any], value))} entries"
     text_value = str(value)
     if len(text_value) > SHOWN_TEXT or "\n" in text_value:
         return f"{len(text_value):,} characters"
-    return webui_events.plain_text(text_value, SHOWN_TEXT, markup=False)
+    return plain_text(text_value, SHOWN_TEXT, markup=False)
 
 
 def is_secret(key: str, extra: Iterable[str] = ()) -> bool:
@@ -427,7 +427,7 @@ def gui_payloads(previews: Iterable[TrackerPreview]) -> tuple[list[dict[str, Any
     items: list[dict[str, Any]] = [
         {
             "tracker": preview.tracker,
-            "name": webui_events.plain_text(preview.name or "", SHOWN_TEXT, markup=False),
+            "name": plain_text(preview.name or "", SHOWN_TEXT, markup=False),
             "fields": [item.to_gui(refs) for item in preview.fields],
         }
         for preview in previews

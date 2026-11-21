@@ -240,7 +240,7 @@ def _next_backup_path(config_path: Path) -> Path:
 
 @contextmanager
 def config_write_lock(config_path: Path, timeout: float = 10.0) -> Iterator[None]:
-    """Serialize WebUI and startup-sync writers across threads and processes."""
+    """Serialize configuration writers across threads and processes."""
     lock_path = config_path.with_name(f"{config_path.name}.sync.lock")
     lock_file = lock_path.open("a+b")
     started = time.monotonic()

@@ -1,14 +1,14 @@
 # Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
 """Cross-process slots for heavy work shared by concurrent Upload Assistant runs.
 
-Each WebUI tab (and each CLI invocation) is a separate ``upload.py`` process, so
-in-process asyncio primitives cannot keep two runs from hashing torrents, posting
-to Usenet or waiting on qBittorrent bandwidth at the same time.
+Each CLI invocation is a separate ``upload.py`` process, so in-process asyncio
+primitives cannot keep two runs from hashing torrents, posting to Usenet or
+waiting on qBittorrent bandwidth at the same time.
 
 A slot is an OS file lock plus a ticket queue. Waiting processes write a ticket
 named after their start time, and only the oldest live run may try the lock, so
 the run that started first goes first. The OS releases the lock when a process
-dies, which keeps a killed tab from leaving a slot held.
+dies, which keeps a killed process from leaving a slot held.
 
 Within one process a slot is shared: concurrent coroutines of the same run hold
 it together, so behaviour inside a single upload is unchanged.
@@ -35,7 +35,6 @@ import psutil
 
 from src.app_paths import TMP_DIR
 from src.console import logger
-from src.webui_progress import complete_progress, publish_progress
 
 RESOURCES = frozenset({"torrent-hash", "usenet-prep", "usenet-post", "screenshots", "bdinfo", "qbit-bandwidth"})
 POLL_SECONDS = 1.0
@@ -229,9 +228,7 @@ async def resource_slot(name: str, label: str) -> AsyncGenerator[None]:
     if not await _acquire_once(name):
         with _state_lock:
             _waiters[name] = _waiters.get(name, 0) + 1
-        progress_id = f"wait-{name}"
         logger.info(f"[yellow]Waiting for {label}: another upload is using it...[/yellow]")
-        publish_progress(progress_id, f"Waiting: {label}", detail="Another upload tab is using this resource", status="waiting", group="coordination")
         try:
             while True:
                 await asyncio.sleep(POLL_SECONDS)
@@ -243,7 +240,6 @@ async def resource_slot(name: str, label: str) -> AsyncGenerator[None]:
                 # Holding the lock needs no ticket; other local waiters re-create it.
                 if not _waiters[name]:
                     _remove_ticket(name)
-            complete_progress(progress_id, f"Waiting: {label}", group="coordination")
 
     try:
         yield

@@ -347,7 +347,7 @@ def begin_item_timing() -> None:
 
 
 def observe_run_event(kind: str, payload: Mapping[str, Any]) -> None:
-    """Listener for run events (stages and request matches) published by ``webui_events``."""
+    """Record stage and request events emitted by the upload workflow."""
     now = time.monotonic()
     with _timing_lock:
         if _item_started_at is None:
